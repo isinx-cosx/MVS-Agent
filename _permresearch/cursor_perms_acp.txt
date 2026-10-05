@@ -1,0 +1,284 @@
+ 
+
+Cursor Permissions & Control Model — permissions.json Schema, Run Modes, Hooks 
+
+Skip to content 
+ 
+ Agentic Control Plane 
+
+Docs 
+ Pricing 
+ Blog 
+ Sign in 
+ Get started 
+
+Documentation ▾ 
+
+Start here
+ Install into your agent How a call is decided Rules and scopes Approvals Every way to set up ACP 
+ 
+ Reference
+ API Integrations Harness controls, compared MCP server controls, compared Coverage matrix Reference architecture 
+ 
+ Teams
+ Team setup Enterprise rollout SOC 2 audit trails PII detection 
+
+The Cursor control model, explained
+
+Cursor’s control surface went through more churn than any other major harness’s in 2026: yolo mode became Auto-Run became Run Modes; two modes were deleted in May; an LLM classifier became the recommended default a week later. The current model is coherent once you see its shape — an allowlist, a sandbox, and a classifier, stacked — but a lot of published advice describes versions that no longer exist. This page is the current reference, 3.x era.
+
+This page covers Cursor’s own controls. For wiring ACP into Cursor, see the install guide . 
+
+The defaults, before any configuration
+
+Worth stating plainly because it surprises people: out of the box, terminal commands need approval — but workspace file edits don’t . Edits save to disk immediately; your undo is version control. Reads and searches are free; MCP tool calls prompt individually unless allowlisted; the agent can’t make arbitrary network requests (a few providers are permitted). Three protections always prompt regardless of mode: browser actions, file deletion, and writes outside the workspace. A short list of paths is deny-write under the sandbox — .git/config , .git/hooks , .vscode , .cursorignore — the harness protecting its own steering files.
+
+Run Modes: the three-layer stack
+
+Since 3.6 (May 2026), the permission posture is a Run Mode:
+
+Auto-review (recommended default). A pipeline: allowlisted calls run; other shell commands run sandboxed where possible; whatever’s left goes to an LLM classifier (a small Cursor-managed model) that returns allow, try-something-different, or ask-the-human. It covers shell, MCP, and fetch.
+
+ Allowlist : listed actions run, everything else prompts. No classifier; sandbox optional.
+
+ Run Everything : everything auto-runs — no sandbox, no classifier, no prompts. The escape hatch as a mode.
+
+Two modes were removed in 3.5 — “Ask Every Time” (now: Allowlist with an empty list) and “Run in Sandbox” (folded into Allowlist). Stale advice frequently references both.
+
+The configuration is genuinely novel, for better and worse: permissions.json ( ~/.cursor/ and per-project, with a team dashboard layer above both) takes allow_instructions and block_instructions as natural-language sentences , not command patterns — the full schema, with examples, is below . Flexible, readable — and probabilistic at the exact point most systems are deterministic. Cursor’s docs say the quiet part out loud, verbatim: “The allowlist is best-effort, not a security boundary. Determined agents or prompt injection might bypass it.” 
+
+That candor is earned by history — three published CVEs of allowlist bypass: command substitution (CVE-2025-54131), environment-variable poisoning and shell built-ins (CVE-2026-22708), and web-content prompt injection chained into auto-execution (CVE-2026-31854). All patched; the class is the lesson, and it’s the same lesson every string-matching permission system teaches .
+
+One more line to internalize: .cursor/rules files steer the model’s behavior — they are not enforcement. Rules are prompts; Run Modes, permissions.json, sandbox.json, and hooks are the controls.
+
+permissions.json reference: autoRun , allow_instructions , block_instructions 
+
+The file behind Run Modes. Everything here is checked against Cursor’s own permissions.json reference and the Run Modes docs as of 2026-09-16; the file has changed before and will again, so confirm a detail upstream before you rely on it.
+
+Where it lives
+
+~/.cursor/permissions.json # per-user — applies in every workspace
+<workspace>/.cursor/permissions.json # per-repo — commit it so the team gets the same rules
+
+Both files are optional. They load at startup and are re-read when they change, JSONC comments are accepted, unrecognized keys are ignored, and non-string entries inside an array are silently dropped. Team admins can set the same lists in the dashboard; when they do, both files are ignored. The Cursor CLI has its own permissions system — this file is the editor’s.
+
+The schema
+
+Three top-level keys, all optional. The top level is camelCase; the two keys inside autoRun are snake_case.
+
+Key 
+ Type 
+ What it does 
+
+terminalAllowlist 
+
+ string[] 
+
+ Terminal commands that run without approval. Prefix match, case-sensitive: git matches git status but not gitk ; git status is narrower; npm:install* uses the colon to split the command from an args glob.
+
+mcpAllowlist 
+
+ string[] 
+
+ MCP tools that run without approval, written server:tool . Case-insensitive; * wildcards either half ( github:* , *:list_issues , *:* ) and globs work inside names ( my-server:list_* ). An entry with no colon is skipped.
+
+autoRun 
+
+ object 
+
+ Natural-language steering for the Auto-review classifier. Read only in Auto-review mode; no effect in Allowlist or Run Everything.
+
+autoRun.allow_instructions 
+
+ string[] 
+
+ Sentences describing call shapes the classifier should lean toward allowing.
+
+autoRun.block_instructions 
+
+ string[] 
+
+ Sentences describing call shapes it should lean toward blocking — an approval prompt surfaces, or the agent picks another path.
+
+The key is autoRun , not autorun . A misspelled key isn’t an error; it’s a key that does nothing.
+
+Examples
+
+Deterministic allowlists — a defined key replaces the matching list in Cursor Settings entirely:
+
+{ 
+ "mcpAllowlist" : [ 
+ "github:*" , 
+ "linear:*" , 
+ "notion:search" 
+ ], 
+ "terminalAllowlist" : [ 
+ "git" , 
+ "npm" , 
+ "cargo build" , 
+ "cargo test" 
+ ] 
+ } 
+
+Steering the Auto-review classifier — each entry is a plain sentence, written the way you’d brief a teammate:
+
+{ 
+ "autoRun" : { 
+ "allow_instructions" : [ 
+ "Read-only inspections of build artifacts under ./dist are fine." 
+ ], 
+ "block_instructions" : [ 
+ "Every AWS CLI command should go through approval first." , 
+ "Every command that modifies Kubernetes resources should go through approval first." 
+ ] 
+ } 
+ } 
+
+Per-user plus per-repo — the arrays inside every field concatenate, so a repo layers its own guardrails on top of your defaults:
+
+// ~/.cursor/permissions.json 
+ { 
+ "terminalAllowlist" : [ "git" , "npm" , "pnpm" ], 
+ "autoRun" : { 
+ "block_instructions" : [ "Anything that touches my SSH config or shell rc files." ] 
+ } 
+ } 
+
+ // <workspace>/.cursor/permissions.json 
+ { 
+ "terminalAllowlist" : [ "cargo build" , "cargo test" ], 
+ "autoRun" : { 
+ "block_instructions" : [ "Never run database migrations against the production schema in this repo." ] 
+ } 
+ } 
+
+ // effective 
+ { 
+ "terminalAllowlist" : [ "git" , "npm" , "pnpm" , "cargo build" , "cargo test" ], 
+ "autoRun" : { 
+ "block_instructions" : [ 
+ "Anything that touches my SSH config or shell rc files." , 
+ "Never run database migrations against the production schema in this repo." 
+ ] 
+ } 
+ } 
+
+Precedence
+
+team admin (dashboard) > permissions.json (per-user ∪ per-repo) > Cursor Settings UI
+
+Dashboard wins outright. When a team configuration applies, neither file nor the Settings list can add entries.
+
+ Between the two files, arrays concatenate — per-user and per-repo entries combine rather than replace each other.
+
+ Against Settings, a defined key replaces. The corresponding section of Cursor Settings turns read-only and the add button disappears.
+
+ A missing file, an unparseable file, or an absent key falls back to Settings. A key that is present but resolves to an empty array does not — the effective allowlist is empty.
+
+ The three areas are independent. Define only mcpAllowlist and the terminal list and autoRun stay under Settings control.
+
+ A Run Mode has to be on. Before 3.5, the deprecated Ask Every Time mode ignored allowlists.
+
+What it enforces and what it steers
+
+The two allowlists are deterministic pattern matches. autoRun is a hint to a model. Cursor’s reference says so directly: a call matching allow_instructions “still goes through the safety check,” a call matching block_instructions “can still be approved when Cursor insists,” and the instruction is to “treat both as steering, not enforcement.” The page’s own notes header: “Not a security boundary.”
+
+So permissions.json is the right place for a convenience and the wrong place for a rule that has to hold. A rule that has to hold goes in the sandbox, a deny, or a failClosed: true hook on beforeShellExecution or beforeMCPExecution — the deterministic seam the hooks section and our Cursor hooks reference cover. That is the line runtime authorization draws: a per-call check the caller can’t talk its way past.
+
+The sandbox
+
+Real OS-level enforcement: Seatbelt on macOS, Landlock + seccomp on Linux (kernel 6.2+), and on Windows, the Linux sandbox inside WSL2 — no native Windows boundary. Bounds: workspace read/write, network blocked by default , /tmp writable, the steering-file deny-writes above. sandbox.json (user and project, project wins, admin layer above) extends readable/writable paths and network domains; the default network mode adds the common package registries. Unsandboxable commands — outside-workspace writes, privileged operations, network needs — escalate to the classifier or the human rather than silently running unconfined.
+
+The hooks
+
+A rich event set, current era: preToolUse / postToolUse , beforeShellExecution / afterShellExecution , beforeMCPExecution , beforeReadFile / afterFileEdit , subagent and session lifecycle, prompt-submit. Four config layers (enterprise MDM → team cloud → project → user); all matching hooks run, higher layer wins conflicts. Output can return permission: allow | deny | ask — with a documented asymmetry: ask is fully honored only for beforeShellExecution and beforeMCPExecution ; on preToolUse it’s accepted by the schema but not enforced. Exit code 2 blocks, Claude Code-style — the hook-contract convergence again.
+
+The default worth designing around: failClosed defaults to false. A crashed or slow hook fails open unless you say otherwise, per hook. If a hook is your enforcement, set it — and know what you’ve chosen when the hook’s backend is unreachable.
+
+The record
+
+Stale-fact flag, because we’ve repeated the older version ourselves: it isn’t that Cursor’s audit log is enterprise-gated — no native per-tool-call audit log exists on any tier. The enterprise dashboard is usage and spend analytics. The docs’ own suggested path to an audit trail is building one with hooks. For a harness whose default mode includes a classifier making allow decisions, that means the decisions with the least explanation also have the least record.
+
+Cloud agents and the empty chair
+
+Cursor’s cloud agents (formerly background agents) are the purest empty-chair case in the ecosystem: they don’t use Run Modes — they auto-run everything , inside an isolated VM with egress allowlists, delivering a branch and draft PR. That’s a defensible design — blast radius contained by the VM, output contained by review-before-merge — but be clear about what it is: per-action policy and per-action record are both absent; the control is the box and the PR review. The CLI carries the same posture into scripts: -p (print mode) gets “access to all tools, including write and shell,” and --force (alias: --yolo ) auto-allows anything not explicitly denied. The empty-chair test is the checklist to run before either.
+
+Where the native model ends
+
+Cursor’s stack — allowlist, then sandbox, then classifier — is a reasonable answer to approval fatigue, and the sandbox work is solid. The structural edges:
+
+Probabilistic at the boundary. Natural-language permission instructions and a classifier verdict are judgment, not rules; Cursor says so itself. Anything that must hold needs the sandbox, a deny, or a fail-closed hook.
+
+ No record at all. Uniquely among the big three , there is no native per-action audit log — the classifier’s allows vanish into the session.
+
+ Config sprawl. permissions.json , sandbox.json, hooks.json, rules — four files with different semantics (two enforcing, one advisory, one mixed), per user and per project, per machine.
+
+ The unattended tier skips policy entirely. Cloud agents trade per-action control for VM walls.
+
+The composition: keep the sandbox and the classifier for what they’re good at — fatigue and containment — and put deterministic policy plus the missing record on the hook seam, failClosed: true , with our integration carrying the same workspace rules here as on every other harness, and writing the per-action ledger Cursor doesn’t have.
+
+Frequently asked questions
+
+What is the schema of Cursor's permissions.json? 
+ Three optional top-level keys. terminalAllowlist — a string array of command prefixes that run without approval ( git , npm:install* ). mcpAllowlist — a string array of server:tool patterns, * as a wildcard on either side. autoRun — an object with allow_instructions and block_instructions , each a string array of plain-English sentences that steer the Auto-review classifier. The key is autoRun (camelCase); the two inside it are snake_case. It lives at ~/.cursor/permissions.json (per user) and <workspace>/.cursor/permissions.json (per repo); both load and their arrays concatenate. The two allowlists are deterministic pattern matches; autoRun only applies in Auto-review mode and Cursor’s docs say to treat it as steering, not enforcement.
+
+How do permissions work in Cursor's agent? 
+ Through Run Modes (Cursor 3.6+): Auto-review — the recommended default — runs allowlisted calls, sandboxes other shell commands where possible, and sends the rest to an LLM classifier that decides allow, try-different, or ask; Allowlist runs listed actions and prompts for the rest; Run Everything auto-runs with no sandbox, classifier, or prompts. Independent of mode, some protections always prompt: browser actions, file deletion, and writes outside the workspace. Note the defaults: terminal commands need approval, but workspace file edits do not — they save to disk immediately.
+
+Are Cursor rules (.cursor/rules) a security control? 
+ No, and Cursor says so: rules steer the prompt, they don’t constrain execution. Enforcement lives in Run Modes, permissions.json, sandbox.json, and hooks. Cursor’s docs are also explicit that the allowlist is best-effort rather than a security boundary — a candor backed by three published CVEs where allowlists were bypassed via command substitution, environment-variable poisoning, and prompt injection chained with allowlist defeat.
+
+Does Cursor keep an audit log of what the agent did? 
+ No native per-tool-call audit log exists on any tier. The enterprise dashboard covers usage and spend analytics, not action audit. The documented path to an audit trail is do-it-yourself via hooks — which is precisely the seam a control layer fills.
+
+What happens to approvals in Cursor's cloud agents? 
+ Cloud agents don’t use Run Modes at all — they auto-run everything, bounded by VM isolation and network egress allowlists, and deliver output as a branch and draft PR. The empty-chair resolution is auto-approve-inside-a-VM: contained in blast radius, but with no per-action policy and no per-action record.
+
+Running Cursor? See and control every tool call it makes — allow/ask/deny before each call, the reason on every row, one installer:
+
+macOS · Linux · WSL
+
+ curl -sf https://agenticcontrolplane.com/install.sh | bash 
+
+ Windows · PowerShell
+
+ irm https://agenticcontrolplane.com/install.ps1 | iex 
+
+Full Cursor guide →  ·  see your first checked call →  ·  free up to 5 agents
+
+A
+AGENTIC CONTROL PLANE
+
+ Permissions, approvals, and cost for the coding agents and harnesses you run.
+
+Occasional data drops — new tool-surface captures and cost benchmarks, when we publish them. No schedule, unsubscribe anytime. 
+
+Subscribe 
+
+Product
+
+ Install 
+ Docs 
+ Integrations 
+ Pricing 
+ Library 
+
+Proof
+
+ Caught in the wild 
+ The numbers 
+ Benchmark 
+ GitHub 
+
+Company
+
+ About 
+ Blog 
+ Status 
+ Contact 
+ Trust & Security 
+ Privacy 
+ Terms 
+
+© 2026 Agentic Control Plane 
+

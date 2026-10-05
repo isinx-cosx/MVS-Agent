@@ -1,0 +1,209 @@
+﻿{
+  "主区域文字": [
+    "MVS Agent",
+    "新会话",
+    "Ctrl",
+    "+",
+    "Alt",
+    "+",
+    "N",
+    "插件",
+    "自动化任务",
+    "工作区",
+    "MVS Agent",
+    "未分组",
+    "新会话",
+    "设置",
+    "让知识动手",
+    "有边界",
+    "选择工作区",
+    "选择一个工作区开始",
+    "请选择模型"
+  ],
+  "侧栏文字": [
+    "MVS Agent",
+    "未分组",
+    "新会话"
+  ],
+  "可点项": [
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "新建会话",
+      "text": "MVS Agent",
+      "cls": "WYye1W_brand WYye1W_wide"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "收起侧边栏",
+      "text": "",
+      "cls": "WYye1W_iconButton WYye1W_toggle"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "新建会话",
+      "text": "新会话 Ctrl + Alt + N",
+      "cls": "WYye1W_newSession"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "插件",
+      "text": "插件",
+      "cls": "WYye1W_panelRow"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "自动化任务",
+      "text": "自动化任务",
+      "cls": "WYye1W_panelRow"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "搜索会话",
+      "text": "",
+      "cls": "tPVXea_searchButton"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "视图选项",
+      "text": "",
+      "cls": "tPVXea_iconButton tPVXea_wide"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "添加工作区",
+      "text": "",
+      "cls": "tPVXea_iconButton"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "工作区“MVS Agent”的操作",
+      "text": "",
+      "cls": "_7VDZUG_iconButton"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "在“MVS Agent”中新建会话",
+      "text": "",
+      "cls": "_7VDZUG_iconButton"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "在“未分组”中新建会话",
+      "text": "",
+      "cls": "_7VDZUG_iconButton"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "设置",
+      "text": "设置",
+      "cls": "ZiQlkq_trigger"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "打开右侧边栏",
+      "text": "",
+      "cls": "_button_1rv3m_2 _ghost_1rv3m_45 _sm_1rv3m_28 iFjIhq_button"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "选择工作区",
+      "text": "选择工作区",
+      "cls": "_7sEdaW_workspace"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "添加文件或调用指令",
+      "text": "",
+      "cls": "uWtHQG_add"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "请选择模型",
+      "text": "请选择模型",
+      "cls": "VYXhfG_trigger"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "打开语音输入引导",
+      "text": "",
+      "cls": "_button_1rv3m_2 _ghost_1rv3m_45 _sm_1rv3m_28 _9t5idG_trigger"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "发送消息",
+      "text": "",
+      "cls": "uWtHQG_primary"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "新标签页",
+      "text": "",
+      "cls": "_addTab_6nhg2_449"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "分栏",
+      "text": "",
+      "cls": "_iconButton_6nhg2_511"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "全屏",
+      "text": "",
+      "cls": "dMHGga_iconButton"
+    },
+    {
+      "tag": "BUTTON",
+      "role": null,
+      "label": "收起右侧边栏",
+      "text": "",
+      "cls": "dMHGga_iconButton"
+    }
+  ],
+  "流": [
+    "workspace/follow",
+    "speech/follow",
+    "$events",
+    "session/control",
+    "session/follow"
+  ],
+  "RPC": [
+    "settings/describe:ok",
+    "dynamicCordisRunner/syncInspectManifest:未实现",
+    "dynamicCordisRunner/inventory:未实现",
+    "credentials/describe:未实现",
+    "session/modelCatalog:未实现",
+    "permissionPresets/catalog:未实现",
+    "agentPresets/list:未实现",
+    "agentPresets/list:未实现",
+    "dynamicCordisRunner/inventory:未实现",
+    "session/modelCatalog:未实现",
+    "settings/describe:ok",
+    "dynamicCordisRunner/syncInspectManifest:未实现",
+    "agentPresets/list:未实现",
+    "session/list:ok",
+    "session/create:ok",
+    "agentPresets/list:未实现"
+  ]
+}

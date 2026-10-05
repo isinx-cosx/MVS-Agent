@@ -1,0 +1,861 @@
+
+
+<!DOCTYPE html>
+
+<html lang="en-US">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge">
+
+  <link rel="stylesheet" href="/assets/css/just-the-docs-default.css">
+
+  <link rel="stylesheet" href="/assets/css/just-the-docs-head-nav.css" id="jtd-head-nav-stylesheet">
+
+  <style id="jtd-nav-activation">
+  
+
+.site-nav > ul.nav-list:first-child > li:not(:nth-child(9)) > a,
+.site-nav > ul.nav-list:first-child > li > ul > li > a,
+.site-nav > ul.nav-list:first-child > li > ul > li > ul > li > a {
+  background-image: none;
+}
+
+.site-nav > ul.nav-list:not(:first-child) a,
+.site-nav li.external a {
+  background-image: none;
+}
+
+.site-nav > ul.nav-list:first-child > li:nth-child(9) > a {
+  font-weight: 600;
+  text-decoration: none;
+}.site-nav > ul.nav-list:first-child > li:nth-child(9) > button svg {
+  transform: rotate(-90deg);
+}.site-nav > ul.nav-list:first-child > li.nav-list-item:nth-child(9) > ul.nav-list {
+  display: block;
+}
+  </style>
+
+  
+
+  
+    <script src="/assets/js/vendor/lunr.min.js"></script>
+  
+
+  <script src="/assets/js/just-the-docs.js"></script>
+
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  
+
+
+
+  <!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>FAQ | aider</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="FAQ" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Frequently asked questions about aider." />
+<meta property="og:description" content="Frequently asked questions about aider." />
+<link rel="canonical" href="https://aider.chat/docs/faq.html" />
+<meta property="og:url" content="https://aider.chat/docs/faq.html" />
+<meta property="og:site_name" content="aider" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="FAQ" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"Frequently asked questions about aider.","headline":"FAQ","url":"https://aider.chat/docs/faq.html"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+  
+<meta property="og:image" content="https://aider.chat/assets/aider.jpg">
+<meta property="twitter:image" content="https://aider.chat/assets/aider-square.jpg">
+
+
+<!-- Custom site title styling -->
+<style>
+  @font-face {
+    font-family: GlassTTYVT220;
+    src: local("Glass TTY VT220"), local("Glass TTY VT220 Medium"), url(/assets/Glass_TTY_VT220.ttf) format("truetype");
+  }
+  
+  .site-title {
+    font-size: 1.8rem;
+    font-weight: 700;
+    font-family: 'GlassTTYVT220', monospace;
+    color: #14b014; /* terminal green color */
+    text-decoration: none;
+    letter-spacing: 0.5px;
+  }
+  
+  /* For SVG logo inside site-title */
+  .site-title img {
+    height: 1.8rem;
+    vertical-align: middle;
+  }
+ 
+  /* Sidebar gradient styling to match hero section */
+  .side-bar { 
+    background: linear-gradient(135deg, #ffffff 0%, rgba(20, 176, 20, 0.01) 25%, rgba(20, 176, 20, 0.04) 40%, rgba(220, 230, 255, 0.4) 60%, rgba(205, 218, 255, 0.4) 80%, #F5F6FA 100%);
+  }
+
+  @media (max-width: 50em) {
+    .ea-ad--sidebar { display: none; }
+    .ea-ad--mobile { display: block; }
+  }
+</style>
+<link rel="alternate" type="application/rss+xml" title="RSS Feed" href="https://aider.chat/feed.xml">
+<link rel="preconnect" href="https://fonts.gstatic.com">
+<link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- Logo Progressive Enhancement for Jekyll pages -->
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const siteTitle = document.querySelector('.site-title');
+    if (siteTitle) {
+      const textContent = siteTitle.textContent; // Save the text for fallback
+      
+      // Create new image element
+      const logoImg = new Image();
+      logoImg.src = '/assets/logo.svg';
+      logoImg.alt = 'Aider Logo';
+      logoImg.style.height = '1.8rem';
+      logoImg.style.verticalAlign = 'middle';
+      
+      // Only replace if image loads successfully
+      logoImg.onload = function() {
+        siteTitle.textContent = ''; // Clear text
+        siteTitle.appendChild(logoImg);
+      };
+      
+      // If image fails to load, do nothing (keep the text)
+      logoImg.onerror = function() {
+        console.log('SVG logo failed to load, keeping text fallback');
+      };
+    }
+  });
+</script>
+<meta name="theme-color" content="#157878">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/icons/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/apple-touch-icon.png">
+<link rel="manifest" href="/assets/icons/site.webmanifest">
+<link rel="mask-icon" href="/assets/icons/safari-pinned-tab.svg" color="#5bbad5">
+<meta name="msapplication-TileColor" content="#da532c">
+<meta name="theme-color" content="#ffffff">
+
+
+
+
+</head>
+
+<body>
+  <a class="skip-to-main" href="#main-content">Skip to main content</a>
+  <svg xmlns="http://www.w3.org/2000/svg" class="d-none">
+  <symbol id="svg-link" viewBox="0 0 24 24">
+  <title>Link</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-link">
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+  </svg>
+</symbol>
+
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+  <title>Menu</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu">
+    <line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line>
+  </svg>
+</symbol>
+
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+  <title>Expand</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-right">
+    <polyline points="9 18 15 12 9 6"></polyline>
+  </svg>
+</symbol>
+
+  <!-- Feather. MIT License: https://github.com/feathericons/feather/blob/master/LICENSE -->
+<symbol id="svg-external-link" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-external-link">
+  <title id="svg-external-link-title">(external link)</title>
+  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line>
+</symbol>
+
+  
+    <symbol id="svg-doc" viewBox="0 0 24 24">
+  <title>Document</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-file">
+    <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline>
+  </svg>
+</symbol>
+
+    <symbol id="svg-search" viewBox="0 0 24 24">
+  <title>Search</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-search">
+    <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+  </svg>
+</symbol>
+
+  
+  
+    <!-- Bootstrap Icons. MIT License: https://github.com/twbs/icons/blob/main/LICENSE.md -->
+<symbol id="svg-copy" viewBox="0 0 16 16">
+  <title>Copy</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-clipboard" viewBox="0 0 16 16">
+    <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/>
+    <path d="M9.5 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3zm-3-1A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3z"/>
+  </svg>
+</symbol>
+<symbol id="svg-copied" viewBox="0 0 16 16">
+  <title>Copied</title>
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-clipboard-check-fill" viewBox="0 0 16 16">
+    <path d="M6.5 0A1.5 1.5 0 0 0 5 1.5v1A1.5 1.5 0 0 0 6.5 4h3A1.5 1.5 0 0 0 11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3Zm3 1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1-.5-.5v-1a.5.5 0 0 1 .5-.5h3Z"/>
+    <path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1A2.5 2.5 0 0 1 9.5 5h-3A2.5 2.5 0 0 1 4 2.5v-1Zm6.854 7.354-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 0 1 .708-.708L7.5 10.793l2.646-2.647a.5.5 0 0 1 .708.708Z"/>
+  </svg>
+</symbol>
+
+  
+</svg>
+
+  <div class="side-bar">
+  <div class="site-header" role="banner">
+    <a href="/" class="site-title lh-tight">
+  aider
+
+</a>
+    <button id="menu-button" class="site-button btn-reset" aria-label="Toggle menu" aria-pressed="false">
+      <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><use xlink:href="#svg-menu"></use></svg>
+    </button>
+  </div>
+
+  <nav aria-label="Main" id="site-nav" class="site-nav">
+  
+  
+    <ul class="nav-list"><li class="nav-list-item"><button class="nav-list-expander btn-reset" aria-label="toggle items in Installation category" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><use xlink:href="#svg-arrow-right"></use></svg>
+    </button><a href="/docs/install.html" class="nav-list-link">Installation</a><ul class="nav-list"><li class="nav-list-item"><a href="/docs/install/optional.html" class="nav-list-link">Optional steps</a></li><li class="nav-list-item"><a href="/docs/install/docker.html" class="nav-list-link">Aider with docker</a></li><li class="nav-list-item"><a href="/docs/install/codespaces.html" class="nav-list-link">GitHub Codespaces</a></li><li class="nav-list-item"><a href="/docs/install/replit.html" class="nav-list-link">Replit</a></li></ul></li><li class="nav-list-item"><button class="nav-list-expander btn-reset" aria-label="toggle items in Usage category" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><use xlink:href="#svg-arrow-right"></use></svg>
+    </button><a href="/docs/usage.html" class="nav-list-link">Usage</a><ul class="nav-list"><li class="nav-list-item"><a href="/docs/usage/tips.html" class="nav-list-link">Tips</a></li><li class="nav-list-item"><a href="/docs/usage/commands.html" class="nav-list-link">In-chat commands</a></li><li class="nav-list-item"><a href="/docs/usage/modes.html" class="nav-list-link">Chat modes</a></li><li class="nav-list-item"><a href="/docs/usage/tutorials.html" class="nav-list-link">Tutorial videos</a></li><li class="nav-list-item"><a href="/docs/usage/voice.html" class="nav-list-link">Voice-to-code with aider</a></li><li class="nav-list-item"><a href="/docs/usage/images-urls.html" class="nav-list-link">Images &amp; web pages</a></li><li class="nav-list-item"><a href="/docs/usage/caching.html" class="nav-list-link">Prompt caching</a></li><li class="nav-list-item"><a href="/docs/usage/watch.html" class="nav-list-link">Aider in your IDE</a></li><li class="nav-list-item"><a href="/docs/usage/notifications.html" class="nav-list-link">Notifications</a></li><li class="nav-list-item"><a href="/docs/usage/browser.html" class="nav-list-link">Aider in your browser</a></li><li class="nav-list-item"><a href="/docs/usage/conventions.html" class="nav-list-link">Specifying coding conventions</a></li><li class="nav-list-item"><a href="/docs/usage/copypaste.html" class="nav-list-link">Copy/paste with web chat</a></li><li class="nav-list-item"><a href="/docs/usage/lint-test.html" class="nav-list-link">Linting and testing</a></li><li class="nav-list-item"><a href="/docs/usage/not-code.html" class="nav-list-link">Editing config &amp; text files</a></li></ul></li><li class="nav-list-item"><button class="nav-list-expander btn-reset" aria-label="toggle items in Connecting to LLMs category" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><use xlink:href="#svg-arrow-right"></use></svg>
+    </button><a href="/docs/llms.html" class="nav-list-link">Connecting to LLMs</a><ul class="nav-list"><li class="nav-list-item"><a href="/docs/llms/openai.html" class="nav-list-link">OpenAI</a></li><li class="nav-list-item"><a href="/docs/llms/anthropic.html" class="nav-list-link">Anthropic</a></li><li class="nav-list-item"><a href="/docs/llms/gemini.html" class="nav-list-link">Gemini</a></li><li class="nav-list-item"><a href="/docs/llms/groq.html" class="nav-list-link">GROQ</a></li><li class="nav-list-item"><a href="/docs/llms/lm-studio.html" class="nav-list-link">LM Studio</a></li><li class="nav-list-item"><a href="/docs/llms/xai.html" class="nav-list-link">xAI</a></li><li class="nav-list-item"><a href="/docs/llms/azure.html" class="nav-list-link">Azure</a></li><li class="nav-list-item"><a href="/docs/llms/cohere.html" class="nav-list-link">Cohere</a></li><li class="nav-list-item"><a href="/docs/llms/deepseek.html" class="nav-list-link">DeepSeek</a></li><li class="nav-list-item"><a href="/docs/llms/ollama.html" class="nav-list-link">Ollama</a></li><li class="nav-list-item"><a href="/docs/llms/openai-compat.html" class="nav-list-link">OpenAI compatible APIs</a></li><li class="nav-list-item"><a href="/docs/llms/openrouter.html" class="nav-list-link">OpenRouter</a></li><li class="nav-list-item"><a href="/docs/llms/github.html" class="nav-list-link">GitHub Copilot</a></li><li class="nav-list-item"><a href="/docs/llms/vertex.html" class="nav-list-link">Vertex AI</a></li><li class="nav-list-item"><a href="/docs/llms/bedrock.html" class="nav-list-link">Amazon Bedrock</a></li><li class="nav-list-item"><a href="/docs/llms/other.html" class="nav-list-link">Other LLMs</a></li><li class="nav-list-item"><a href="/docs/llms/warnings.html" class="nav-list-link">Model warnings</a></li></ul></li><li class="nav-list-item"><button class="nav-list-expander btn-reset" aria-label="toggle items in Configuration category" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><use xlink:href="#svg-arrow-right"></use></svg>
+    </button><a href="/docs/config.html" class="nav-list-link">Configuration</a><ul class="nav-list"><li class="nav-list-item"><a href="/docs/config/api-keys.html" class="nav-list-link">API Keys</a></li><li class="nav-list-item"><a href="/docs/config/options.html" class="nav-list-link">Options reference</a></li><li class="nav-list-item"><a href="/docs/config/aider_conf.html" class="nav-list-link">YAML config file</a></li><li class="nav-list-item"><a href="/docs/config/dotenv.html" class="nav-list-link">Config with .env</a></li><li class="nav-list-item"><a href="/docs/config/editor.html" class="nav-list-link">Editor configuration</a></li><li class="nav-list-item"><a href="/docs/config/reasoning.html" class="nav-list-link">Reasoning models</a></li><li class="nav-list-item"><a href="/docs/config/adv-model-settings.html" class="nav-list-link">Advanced model settings</a></li><li class="nav-list-item"><a href="/docs/config/model-aliases.html" class="nav-list-link">Model Aliases</a></li></ul></li><li class="nav-list-item"><button class="nav-list-expander btn-reset" aria-label="toggle items in Troubleshooting category" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><use xlink:href="#svg-arrow-right"></use></svg>
+    </button><a href="/docs/troubleshooting.html" class="nav-list-link">Troubleshooting</a><ul class="nav-list"><li class="nav-list-item"><a href="/docs/troubleshooting/edit-errors.html" class="nav-list-link">File editing problems</a></li><li class="nav-list-item"><a href="/docs/troubleshooting/warnings.html" class="nav-list-link">Model warnings</a></li><li class="nav-list-item"><a href="/docs/troubleshooting/token-limits.html" class="nav-list-link">Token limits</a></li><li class="nav-list-item"><a href="/docs/troubleshooting/aider-not-found.html" class="nav-list-link">Aider not found</a></li><li class="nav-list-item"><a href="/docs/troubleshooting/imports.html" class="nav-list-link">Dependency versions</a></li><li class="nav-list-item"><a href="/docs/troubleshooting/models-and-keys.html" class="nav-list-link">Models and API keys</a></li><li class="nav-list-item"><a href="/docs/troubleshooting/support.html" class="nav-list-link">Using /help</a></li></ul></li><li class="nav-list-item"><button class="nav-list-expander btn-reset" aria-label="toggle items in Screen recordings category" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><use xlink:href="#svg-arrow-right"></use></svg>
+    </button><a href="/docs/recordings/" class="nav-list-link">Screen recordings</a><ul class="nav-list"><li class="nav-list-item"><a href="/docs/recordings/tree-sitter-language-pack.html" class="nav-list-link">Add language support via tree-sitter-language-pack</a></li><li class="nav-list-item"><a href="/docs/recordings/auto-accept-architect.html" class="nav-list-link">Add –auto-accept-architect feature</a></li><li class="nav-list-item"><a href="/docs/recordings/dont-drop-original-read-files.html" class="nav-list-link">Don’t /drop read-only files added at launch</a></li><li class="nav-list-item"><a href="/docs/recordings/model-accepts-settings.html" class="nav-list-link">Warn when users apply unsupported reasoning settings</a></li></ul></li><li class="nav-list-item"><button class="nav-list-expander btn-reset" aria-label="toggle items in Example chat transcripts category" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><use xlink:href="#svg-arrow-right"></use></svg>
+    </button><a href="/examples/README.html" class="nav-list-link">Example chat transcripts</a><ul class="nav-list"><li class="nav-list-item"><a href="/examples/hello-world-flask.html" class="nav-list-link">Create a simple flask app with aider</a></li><li class="nav-list-item"><a href="/examples/2048-game.html" class="nav-list-link">Modify an open source 2048 game with aider</a></li><li class="nav-list-item"><a href="/examples/complex-change.html" class="nav-list-link">A complex multi-file change, with debugging</a></li><li class="nav-list-item"><a href="/examples/add-test.html" class="nav-list-link">Create a “black box” test case</a></li><li class="nav-list-item"><a href="/examples/update-docs.html" class="nav-list-link">Automatically update docs with aider</a></li><li class="nav-list-item"><a href="/examples/pong.html" class="nav-list-link">Build pong with aider and pygame.</a></li><li class="nav-list-item"><a href="/examples/css-exercises.html" class="nav-list-link">Complete a css exercise with aider</a></li><li class="nav-list-item"><a href="/examples/census.html" class="nav-list-link">Download, analyze and plot US Census data</a></li><li class="nav-list-item"><a href="/examples/asciinema.html" class="nav-list-link">Editing an asciinema cast file with aider</a></li><li class="nav-list-item"><a href="/examples/hello.html" class="nav-list-link">Hello aider!</a></li><li class="nav-list-item"><a href="/examples/no-color.html" class="nav-list-link">Honor the NO_COLOR environment variable</a></li><li class="nav-list-item"><a href="/examples/chat-transcript-css.html" class="nav-list-link">Improve css styling of chat transcripts</a></li><li class="nav-list-item"><a href="/examples/semantic-search-replace.html" class="nav-list-link">Semantic search &amp; replace code with aider</a></li></ul></li><li class="nav-list-item"><button class="nav-list-expander btn-reset" aria-label="toggle items in More info category" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><use xlink:href="#svg-arrow-right"></use></svg>
+    </button><a href="/docs/more-info.html" class="nav-list-link">More info</a><ul class="nav-list"><li class="nav-list-item"><a href="/docs/git.html" class="nav-list-link">Git integration</a></li><li class="nav-list-item"><a href="/docs/languages.html" class="nav-list-link">Supported languages</a></li><li class="nav-list-item"><a href="/docs/repomap.html" class="nav-list-link">Repository map</a></li><li class="nav-list-item"><a href="/docs/scripting.html" class="nav-list-link">Scripting aider</a></li><li class="nav-list-item"><a href="/docs/more/infinite-output.html" class="nav-list-link">Infinite output</a></li><li class="nav-list-item"><a href="/docs/more/edit-formats.html" class="nav-list-link">Edit formats</a></li><li class="nav-list-item"><a href="/docs/more/analytics.html" class="nav-list-link">Analytics</a></li><li class="nav-list-item"><a href="/docs/legal/privacy.html" class="nav-list-link">Privacy policy</a></li></ul></li><li class="nav-list-item"><a href="/docs/faq.html" class="nav-list-link">FAQ</a></li><li class="nav-list-item"><a href="/HISTORY.html" class="nav-list-link">Release history</a></li><li class="nav-list-item"><button class="nav-list-expander btn-reset" aria-label="toggle items in Aider LLM Leaderboards category" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><use xlink:href="#svg-arrow-right"></use></svg>
+    </button><a href="/docs/leaderboards/" class="nav-list-link">Aider LLM Leaderboards</a><ul class="nav-list"><li class="nav-list-item"><a href="/docs/leaderboards/edit.html" class="nav-list-link">Code editing leaderboard</a></li><li class="nav-list-item"><a href="/docs/leaderboards/refactor.html" class="nav-list-link">Refactoring leaderboard</a></li><li class="nav-list-item"><a href="/docs/leaderboards/by-release-date.html" class="nav-list-link">Scores by release date</a></li><li class="nav-list-item"><a href="/docs/leaderboards/notes.html" class="nav-list-link">Benchmark notes</a></li><li class="nav-list-item"><a href="/docs/leaderboards/contrib.html" class="nav-list-link">Contributing results</a></li></ul></li><li class="nav-list-item"><a href="/blog/" class="nav-list-link">Aider blog</a></li></ul>
+
+  <ul class="nav-list"><li class="nav-list-item external">
+          <a href="https://github.com/Aider-AI/aider" class="nav-list-link external"
+            
+          >
+            GitHub
+            <svg viewBox="0 0 24 24" aria-labelledby="svg-external-link-title"><use xlink:href="#svg-external-link"></use></svg>
+          </a>
+        </li><li class="nav-list-item external">
+          <a href="https://discord.gg/Y7X7bhMQFV" class="nav-list-link external"
+            
+          >
+            Discord
+            <svg viewBox="0 0 24 24" aria-labelledby="svg-external-link-title"><use xlink:href="#svg-external-link"></use></svg>
+          </a>
+        </li></ul>
+</nav>
+
+
+  
+  
+    <footer class="site-footer">
+    Aider is AI pair programming in your terminal.
+    Aider is on
+    <a href="https://github.com/Aider-AI/aider">GitHub</a>
+    and
+    <a href="https://discord.gg/Y7X7bhMQFV">Discord</a>.
+</footer>
+
+  
+</div>
+
+  <div class="main" id="top">
+    <div id="main-header" class="main-header">
+  
+    
+
+<div class="search" role="search">
+  <div class="search-input-wrap">
+    <input type="text" id="search-input" class="search-input" tabindex="0" placeholder="Search aider" aria-label="Search aider" autocomplete="off">
+    <label for="search-input" class="search-label"><svg viewBox="0 0 24 24" class="search-icon"><use xlink:href="#svg-search"></use></svg></label>
+  </div>
+  <div id="search-results" class="search-results"></div>
+</div>
+
+  
+  
+  
+    <nav aria-label="Auxiliary" class="aux-nav">
+  <ul class="aux-nav-list">
+    
+      <li class="aux-nav-list-item">
+        <a href="https://github.com/Aider-AI/aider" class="site-button"
+          
+        >
+          GitHub
+        </a>
+      </li>
+    
+      <li class="aux-nav-list-item">
+        <a href="https://discord.gg/Y7X7bhMQFV" class="site-button"
+          
+        >
+          Discord
+        </a>
+      </li>
+    
+      <li class="aux-nav-list-item">
+        <a href="/blog/" class="site-button"
+          
+        >
+          Blog
+        </a>
+      </li>
+    
+  </ul>
+</nav>
+
+  
+</div>
+
+    <div class="main-content-wrap">
+      
+      <div id="main-content" class="main-content">
+        <main>
+          
+            <h1 class="no_toc" id="faq">
+  
+  
+    <a href="#faq" class="anchor-heading" aria-labelledby="faq"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> FAQ
+  
+  
+</h1>
+    
+
+<ul id="markdown-toc">
+  <li><a href="#how-can-i-add-all-the-files-to-the-chat" id="markdown-toc-how-can-i-add-all-the-files-to-the-chat">How can I add ALL the files to the chat?</a></li>
+  <li><a href="#can-i-use-aider-in-a-large-mono-repo" id="markdown-toc-can-i-use-aider-in-a-large-mono-repo">Can I use aider in a large (mono) repo?</a></li>
+  <li><a href="#can-i-use-aider-with-multiple-git-repos-at-once" id="markdown-toc-can-i-use-aider-with-multiple-git-repos-at-once">Can I use aider with multiple git repos at once?</a></li>
+  <li><a href="#how-do-i-turn-on-the-repository-map" id="markdown-toc-how-do-i-turn-on-the-repository-map">How do I turn on the repository map?</a></li>
+  <li><a href="#how-do-i-include-the-git-history-in-the-context" id="markdown-toc-how-do-i-include-the-git-history-in-the-context">How do I include the git history in the context?</a></li>
+  <li><a href="#how-can-i-run-aider-locally-from-source-code" id="markdown-toc-how-can-i-run-aider-locally-from-source-code">How can I run aider locally from source code?</a></li>
+  <li><a href="#can-i-change-the-system-prompts-that-aider-uses" id="markdown-toc-can-i-change-the-system-prompts-that-aider-uses">Can I change the system prompts that aider uses?</a></li>
+  <li><a href="#what-llms-do-you-use-to-build-aider" id="markdown-toc-what-llms-do-you-use-to-build-aider">What LLMs do you use to build aider?</a></li>
+  <li><a href="#how-are-the-aider-wrote-xx-of-code-stats-computed" id="markdown-toc-how-are-the-aider-wrote-xx-of-code-stats-computed">How are the “aider wrote xx% of code” stats computed?</a></li>
+  <li><a href="#why-did-aider-ignorediscard-its-proposed-edits-after-it-asked-to-add-a-new-file-to-the-chat" id="markdown-toc-why-did-aider-ignorediscard-its-proposed-edits-after-it-asked-to-add-a-new-file-to-the-chat">Why did aider ignore/discard its proposed edits after it asked to add a new file to the chat?</a></li>
+  <li><a href="#why-does-aider-sometimes-stop-highlighting-code-in-its-replies" id="markdown-toc-why-does-aider-sometimes-stop-highlighting-code-in-its-replies">Why does aider sometimes stop highlighting code in its replies?</a></li>
+  <li><a href="#why-is-the-llm-speaking-to-me-in-an-unexpected-language" id="markdown-toc-why-is-the-llm-speaking-to-me-in-an-unexpected-language">Why is the LLM speaking to me in an unexpected language?</a></li>
+  <li><a href="#can-i-share-my-aider-chat-transcript" id="markdown-toc-can-i-share-my-aider-chat-transcript">Can I share my aider chat transcript?</a></li>
+  <li><a href="#can-i-edit-files-myself-while-aider-is-running" id="markdown-toc-can-i-edit-files-myself-while-aider-is-running">Can I edit files myself while aider is running?</a></li>
+  <li><a href="#what-is-aider-ai-llc" id="markdown-toc-what-is-aider-ai-llc">What is Aider AI LLC?</a></li>
+  <li><a href="#can-i-script-aider" id="markdown-toc-can-i-script-aider">Can I Script Aider?</a></li>
+</ul>
+
+<p class="tip">Use <code class="language-plaintext highlighter-rouge">/help &lt;question&gt;</code> to 
+<a href="/docs/troubleshooting/support.html">ask for help about using aider</a>,
+customizing settings, troubleshooting, using LLMs, etc.</p>
+<h2 id="how-can-i-add-all-the-files-to-the-chat">
+  
+  
+    <a href="#how-can-i-add-all-the-files-to-the-chat" class="anchor-heading" aria-labelledby="how-can-i-add-all-the-files-to-the-chat"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> How can I add ALL the files to the chat?
+  
+  
+</h2>
+    
+
+<p>People regularly ask about how to add <strong>many or all of their repo’s files</strong> to the chat.
+This is probably not a good idea and will likely do more harm than good.</p>
+
+<p>The best approach is think about which files need to be changed to accomplish
+the task you are working on. Just add those files to the chat.</p>
+
+<p>Usually when people want to add “all the files” it’s because they think it
+will give the LLM helpful context about the overall code base.
+Aider will automatically give the LLM a bunch of additional context about
+the rest of your git repo.
+It does this by analyzing your entire codebase in light of the
+current chat to build a compact
+<a href="https://aider.chat/2023/10/22/repomap.html">repository map</a>.</p>
+
+<p>Adding a bunch of files that are mostly irrelevant to the
+task at hand will often distract or confuse the LLM.
+The LLM will give worse coding results, and sometimese even fail to correctly edit files.
+Addings extra files will also increase your token costs.</p>
+
+<p>Again, it’s usually best to just add the files to the chat that will need to be modified.
+If you still wish to add lots of files to the chat, you can:</p>
+
+<ul>
+  <li>Use a wildcard when you launch aider: <code class="language-plaintext highlighter-rouge">aider src/*.py</code></li>
+  <li>Use a wildcard with the in-chat <code class="language-plaintext highlighter-rouge">/add</code> command: <code class="language-plaintext highlighter-rouge">/add src/*.py</code></li>
+  <li>Give the <code class="language-plaintext highlighter-rouge">/add</code> command a directory name and it will recursively add every file under that dir: <code class="language-plaintext highlighter-rouge">/add src</code></li>
+</ul>
+<h2 id="can-i-use-aider-in-a-large-mono-repo">
+  
+  
+    <a href="#can-i-use-aider-in-a-large-mono-repo" class="anchor-heading" aria-labelledby="can-i-use-aider-in-a-large-mono-repo"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Can I use aider in a large (mono) repo?
+  
+  
+</h2>
+    
+
+<p>Aider will work in any size repo, but is not optimized for quick
+performance and response time in very large repos.
+There are some things you can do to improve performance.</p>
+
+<p>Be sure to check the
+<a href="/docs/usage/tips.html">general usage tips</a>
+before considering this large-repo specific advice.
+To get the best results from aider you want to 
+be thoughtful about how you add files to the chat,
+regardless of your repo size.</p>
+
+<p>You can change into a sub directory of your repo that contains the
+code you want to work on and use the <code class="language-plaintext highlighter-rouge">--subtree-only</code> switch.
+This will tell aider to ignore the repo outside of the
+directory you start in.</p>
+
+<p>You can also create a <code class="language-plaintext highlighter-rouge">.aiderignore</code> file to tell aider
+to ignore parts of the repo that aren’t relevant to your task.
+This file conforms to <code class="language-plaintext highlighter-rouge">.gitignore</code> syntax and conventions.
+For example, to focus only on specific directories in a monorepo,
+you could create a <code class="language-plaintext highlighter-rouge">.aiderignore</code> file with:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># Ignore everything
+/*
+
+# Allow specific directories and their contents
+!foo/
+!bar/
+!baz/
+
+# Allow nested files under these directories
+!foo/**
+!bar/**
+!baz/**
+</code></pre></div></div>
+
+<p>You can use <code class="language-plaintext highlighter-rouge">--aiderignore &lt;filename&gt;</code> to name a specific file
+to use for ignore patterns.
+You might have a few of these handy for when you want to work on
+frontend, backend, etc portions of your repo.</p>
+<h2 id="can-i-use-aider-with-multiple-git-repos-at-once">
+  
+  
+    <a href="#can-i-use-aider-with-multiple-git-repos-at-once" class="anchor-heading" aria-labelledby="can-i-use-aider-with-multiple-git-repos-at-once"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Can I use aider with multiple git repos at once?
+  
+  
+</h2>
+    
+
+<p>Currently aider can only work with one repo at a time.</p>
+
+<p>There are some things you can try if you need to work with
+multiple interrelated repos:</p>
+
+<ul>
+  <li>You can run aider in repo-A where you need to make a change
+and use <code class="language-plaintext highlighter-rouge">/read</code> to add some files read-only from another repo-B.
+This can let aider see key functions or docs from the other repo.</li>
+  <li>You can run <code class="language-plaintext highlighter-rouge">aider --show-repo-map &gt; map.md</code> within each
+repo to create repo maps.
+You could then run aider in repo-A and 
+use <code class="language-plaintext highlighter-rouge">/read ../path/to/repo-B/map.md</code> to share
+a high level map of the other repo.</li>
+  <li>You can use aider to write documentation about a repo.
+Inside each repo, you could run <code class="language-plaintext highlighter-rouge">aider docs.md</code>
+and work with aider to write some markdown docs.
+Then while using aider to edit repo-A
+you can <code class="language-plaintext highlighter-rouge">/read ../path/to/repo-B/docs.md</code> to
+read in those docs from the other repo.</li>
+  <li>In repo A, ask aider to write a small script that demonstrates
+the functionality you want to use in repo B.
+Then when you’re using aider in repo B, you can 
+<code class="language-plaintext highlighter-rouge">/read</code> in that script.</li>
+</ul>
+<h2 id="how-do-i-turn-on-the-repository-map">
+  
+  
+    <a href="#how-do-i-turn-on-the-repository-map" class="anchor-heading" aria-labelledby="how-do-i-turn-on-the-repository-map"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> How do I turn on the repository map?
+  
+  
+</h2>
+    
+
+<p>Depending on the LLM you are using, aider may launch with the repo map disabled by default:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Repo-map: disabled
+</code></pre></div></div>
+
+<p>This is because weaker models get easily overwhelmed and confused by the content of the
+repo map. They sometimes mistakenly try to edit the code in the repo map.
+The repo map is usually disabled for a good reason.</p>
+
+<p>If you would like to force it on, you can run aider with <code class="language-plaintext highlighter-rouge">--map-tokens 1024</code>.</p>
+<h2 id="how-do-i-include-the-git-history-in-the-context">
+  
+  
+    <a href="#how-do-i-include-the-git-history-in-the-context" class="anchor-heading" aria-labelledby="how-do-i-include-the-git-history-in-the-context"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> How do I include the git history in the context?
+  
+  
+</h2>
+    
+
+<p>When starting a fresh aider session, you can include recent git history in the chat context. This can be useful for providing the LLM with information about recent changes. To do this:</p>
+
+<ol>
+  <li>Use the <code class="language-plaintext highlighter-rouge">/run</code> command with <code class="language-plaintext highlighter-rouge">git diff</code> to show recent changes:
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/run git diff HEAD~1
+</code></pre></div>    </div>
+    <p>This will include the diff of the last commit in the chat history.</p>
+  </li>
+  <li>To include diffs from multiple commits, increase the number after the tilde:
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/run git diff HEAD~3
+</code></pre></div>    </div>
+    <p>This will show changes from the last three commits.</p>
+  </li>
+</ol>
+
+<p>Remember, the chat history already includes recent changes made during the current session, so this tip is most useful when starting a new aider session and you want to provide context about recent work.</p>
+
+<p>You can also use aider to review PR branches:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>/run git diff one-branch..another-branch
+
+...
+
+Add 6.9k tokens of command output to the chat? (Y)es/(N)o [Yes]: Yes
+
+/ask Are there any problems with the way this change works with the FooBar class?
+</code></pre></div></div>
+
+<p>And of course you can prepare diff output outside of aider and provide it as
+a file for aider to read:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ git diff -C10 v1..v2 &gt; v1-v2-changes.diff
+$ aider --read v1-v2-changes.diff
+
+Aider v0.77.2.dev+import
+Main model: anthropic/claude-3-7-sonnet-20250219 with diff edit format, 8k think tokens
+──────────────────────────────────
+v1-v2-changes.diff
+&gt; Do you see any potential bugs in this PR?
+</code></pre></div></div>
+
+<p class="tip">The <code class="language-plaintext highlighter-rouge">/git</code> command will not work for this purpose, as its output is not included in the chat.</p>
+<h2 id="how-can-i-run-aider-locally-from-source-code">
+  
+  
+    <a href="#how-can-i-run-aider-locally-from-source-code" class="anchor-heading" aria-labelledby="how-can-i-run-aider-locally-from-source-code"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> How can I run aider locally from source code?
+  
+  
+</h2>
+    
+
+<p>To run the project locally, follow these steps:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code># Clone the repository
+git clone git@github.com:Aider-AI/aider.git
+
+# Navigate to the project directory
+cd aider
+
+# It's recommended to make a virtual environment
+
+# Install aider in editable/development mode, 
+# so it runs from the latest copy of these source files
+python -m pip install -e .
+
+# Run the local version of aider
+python -m aider
+</code></pre></div></div>
+<h2 id="can-i-change-the-system-prompts-that-aider-uses">
+  
+  
+    <a href="#can-i-change-the-system-prompts-that-aider-uses" class="anchor-heading" aria-labelledby="can-i-change-the-system-prompts-that-aider-uses"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Can I change the system prompts that aider uses?
+  
+  
+</h2>
+    
+
+<p>The most convenient way to add custom instructions is to use a
+<a href="https://aider.chat/docs/usage/conventions.html">conventions file</a>.</p>
+
+<p>But, aider is set up to support different actual system prompts and edit formats
+in a modular way. If you look in the <code class="language-plaintext highlighter-rouge">aider/coders</code> subdirectory, you’ll
+see there’s a base coder with base prompts, and then there are
+a number of
+different specific coder implementations.</p>
+
+<p>If you’re thinking about experimenting with system prompts
+this document about
+<a href="https://aider.chat/docs/benchmarks.html">benchmarking GPT-3.5 and GPT-4 on code editing</a>
+might be useful background.</p>
+
+<p>While it’s not well documented how to add new coder subsystems, you may be able
+to modify an existing implementation or use it as a template to add another.</p>
+
+<p>To get started, try looking at and modifying these files.</p>
+
+<p>The wholefile coder is currently used by GPT-3.5 by default. You can manually select it with <code class="language-plaintext highlighter-rouge">--edit-format whole</code>.</p>
+
+<ul>
+  <li>wholefile_coder.py</li>
+  <li>wholefile_prompts.py</li>
+</ul>
+
+<p>The editblock coder is currently used by GPT-4o by default. You can manually select it with <code class="language-plaintext highlighter-rouge">--edit-format diff</code>.</p>
+
+<ul>
+  <li>editblock_coder.py</li>
+  <li>editblock_prompts.py</li>
+</ul>
+
+<p>The universal diff coder is currently used by GPT-4 Turbo by default. You can manually select it with <code class="language-plaintext highlighter-rouge">--edit-format udiff</code>.</p>
+
+<ul>
+  <li>udiff_coder.py</li>
+  <li>udiff_prompts.py</li>
+</ul>
+
+<p>When experimenting with coder backends, it helps to run aider with <code class="language-plaintext highlighter-rouge">--verbose --no-pretty</code> so you can see
+all the raw information being sent to/from the LLM in the conversation.</p>
+
+<p>You can also refer to the
+<a href="https://aider.chat/docs/install/optional.html#install-the-development-version-of-aider">instructions for installing a development version of aider</a>.</p>
+<h2 id="what-llms-do-you-use-to-build-aider">
+  
+  
+    <a href="#what-llms-do-you-use-to-build-aider" class="anchor-heading" aria-labelledby="what-llms-do-you-use-to-build-aider"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> What LLMs do you use to build aider?
+  
+  
+</h2>
+    
+
+<p>Aider writes a lot of its own code, usually about 70% of the new code in each
+release.
+People often ask which LLMs I use with aider, when writing aider.
+Below is a table showing the models I have used recently,
+extracted from the 
+<a href="https://github.com/aider-ai/aider/blob/main/aider/website/assets/sample-analytics.jsonl">public log</a>
+of my
+<a href="https://aider.chat/docs/more/analytics.html">aider analytics</a>.</p>
+
+<!--[[[cog
+import sys
+sys.path.append(".")
+import scripts.my_models as my_models
+stats = my_models.collect_model_stats()
+html = my_models.format_html_table(stats)
+cog.out(html)
+]]]-->
+<style>
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+th { background-color: #f2f2f2; }
+tr:hover { background-color: #f5f5f5; }
+.right { text-align: right; }
+</style>
+
+<div class="table-wrapper"><table>
+<tr><th>Model Name</th><th class="right">Total Tokens</th><th class="right">Percent</th></tr>
+<tr><td>openai/gpt-5.2</td><td class="right">982,120</td><td class="right">38.8%</td></tr>
+<tr><td>gpt-5.4</td><td class="right">775,412</td><td class="right">30.6%</td></tr>
+<tr><td>gemini/gemini-3-flash-preview</td><td class="right">241,516</td><td class="right">9.5%</td></tr>
+<tr><td>gpt-5.2-codex</td><td class="right">166,945</td><td class="right">6.6%</td></tr>
+<tr><td>gpt-5.2</td><td class="right">93,248</td><td class="right">3.7%</td></tr>
+<tr><td>gemini/gemini-3-pro-preview</td><td class="right">81,851</td><td class="right">3.2%</td></tr>
+<tr><td>gpt-5.3-codex</td><td class="right">64,402</td><td class="right">2.5%</td></tr>
+<tr><td>gemini/gemini-2.5-pro</td><td class="right">58,916</td><td class="right">2.3%</td></tr>
+<tr><td>gpt-5</td><td class="right">39,467</td><td class="right">1.6%</td></tr>
+<tr><td>gpt-5.5</td><td class="right">25,877</td><td class="right">1.0%</td></tr>
+<tr><td>openai/gpt-5.4</td><td class="right">278</td><td class="right">0.0%</td></tr>
+<tr><td>openai/gpt-5.5</td><td class="right">89</td><td class="right">0.0%</td></tr>
+</table></div>
+<!--[[[end]]]-->
+<h2 id="how-are-the-aider-wrote-xx-of-code-stats-computed">
+  
+  
+    <a href="#how-are-the-aider-wrote-xx-of-code-stats-computed" class="anchor-heading" aria-labelledby="how-are-the-aider-wrote-xx-of-code-stats-computed"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> How are the “aider wrote xx% of code” stats computed?
+  
+  
+</h2>
+    
+
+<p><a href="/docs/git.html">Aider is tightly integrated with git</a> so all
+of aider’s code changes are committed to the repo with proper attribution.
+The 
+<a href="https://github.com/Aider-AI/aider/blob/main/scripts/blame.py">stats are computed</a>
+by doing something like <code class="language-plaintext highlighter-rouge">git blame</code> on the repo,
+and counting up who wrote all the new lines of code in each release.
+Only lines in source code files are counted, not documentation or prompt files.</p>
+<h2 id="why-did-aider-ignorediscard-its-proposed-edits-after-it-asked-to-add-a-new-file-to-the-chat">
+  
+  
+    <a href="#why-did-aider-ignorediscard-its-proposed-edits-after-it-asked-to-add-a-new-file-to-the-chat" class="anchor-heading" aria-labelledby="why-did-aider-ignorediscard-its-proposed-edits-after-it-asked-to-add-a-new-file-to-the-chat"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Why did aider ignore/discard its proposed edits after it asked to add a new file to the chat?
+  
+  
+</h2>
+    
+
+<p>If aider prompts you to add a new file to the chat and you say yes,
+it will re-submit the original request. 
+The fact that the LLM’s reply indicated that it needed to see another file (and you said yes)
+is often a sign that the LLM should have been able to see/edit that file in the first place. 
+Without access to it, there is increased chance that it’s done a bad implementation of the requested change.
+Often LLMs will hallucinate content for the files they needed but didn’t have.
+So aider re-submits the original request in this situation.</p>
+<h2 id="why-does-aider-sometimes-stop-highlighting-code-in-its-replies">
+  
+  
+    <a href="#why-does-aider-sometimes-stop-highlighting-code-in-its-replies" class="anchor-heading" aria-labelledby="why-does-aider-sometimes-stop-highlighting-code-in-its-replies"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Why does aider sometimes stop highlighting code in its replies?
+  
+  
+</h2>
+    
+
+<p>Aider displays the markdown responses that are coming back from the LLM.
+Usually, the LLM will reply with code in a markdown “code block” with
+triple backtick fences, like this:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Here's some code:
+
+```
+print("hello")
+```
+</code></pre></div></div>
+
+<p>But if you’ve added files to the chat that contain triple backticks,
+aider needs to tell the LLM to use a different set of fences.
+Otherwise, the LLM can’t safely include your code’s triple backticks
+inside the code blocks that it returns with edits.
+Aider will use fences like <code class="language-plaintext highlighter-rouge">&lt;source&gt;...&lt;/source&gt;</code> in this case.</p>
+
+<p>A side effect of this is that the code that aider outputs may no
+longer be properly highlighted.
+You will most often notice this if you add markdown files
+to you chats that contain code blocks.</p>
+<h2 id="why-is-the-llm-speaking-to-me-in-an-unexpected-language">
+  
+  
+    <a href="#why-is-the-llm-speaking-to-me-in-an-unexpected-language" class="anchor-heading" aria-labelledby="why-is-the-llm-speaking-to-me-in-an-unexpected-language"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Why is the LLM speaking to me in an unexpected language?
+  
+  
+</h2>
+    
+
+<p>Aider goes to some effort to prompt the model to use the language that is configured
+for your system.
+But LLMs aren’t fully reliable, and they sometimes decide to speak in
+an unexpected language.
+Claude is especially fond of speaking French.</p>
+
+<p>You can explicitly set the language that aider tells the model to use with
+<code class="language-plaintext highlighter-rouge">--chat-language &lt;language&gt;</code>.
+But the LLM may not comply.</p>
+<h2 id="can-i-share-my-aider-chat-transcript">
+  
+  
+    <a href="#can-i-share-my-aider-chat-transcript" class="anchor-heading" aria-labelledby="can-i-share-my-aider-chat-transcript"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Can I share my aider chat transcript?
+  
+  
+</h2>
+    
+
+<p>Yes, you can now share aider chat logs in a pretty way.</p>
+
+<ol>
+  <li>
+    <p>Copy the markdown logs you want to share from <code class="language-plaintext highlighter-rouge">.aider.chat.history.md</code> and make a github gist. Or publish the raw markdown logs on the web any way you’d like.</p>
+
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>https://gist.github.com/Aider-AI/2087ab8b64034a078c0a209440ac8be0
+</code></pre></div>    </div>
+  </li>
+  <li>
+    <p>Take the gist URL and append it to:</p>
+
+    <div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>https://aider.chat/share/?mdurl=
+</code></pre></div>    </div>
+  </li>
+</ol>
+
+<p>This will give you a URL like this, which shows the chat history like you’d see in a terminal:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>https://aider.chat/share/?mdurl=https://gist.github.com/Aider-AI/2087ab8b64034a078c0a209440ac8be0
+</code></pre></div></div>
+<h2 id="can-i-edit-files-myself-while-aider-is-running">
+  
+  
+    <a href="#can-i-edit-files-myself-while-aider-is-running" class="anchor-heading" aria-labelledby="can-i-edit-files-myself-while-aider-is-running"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Can I edit files myself while aider is running?
+  
+  
+</h2>
+    
+
+<p>Yes. Aider always reads the latest copy of files from the file
+system when you send each message.</p>
+
+<p>While you’re waiting for aider’s reply to complete, it’s probably unwise to
+edit files that you’ve added to the chat.
+Your edits and aider’s edits might conflict.</p>
+<h2 id="what-is-aider-ai-llc">
+  
+  
+    <a href="#what-is-aider-ai-llc" class="anchor-heading" aria-labelledby="what-is-aider-ai-llc"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> What is Aider AI LLC?
+  
+  
+</h2>
+    
+
+<p>Aider AI LLC is the company behind the aider AI coding tool.
+Aider is 
+<a href="https://github.com/Aider-AI/aider">open source and available on GitHub</a>
+under an 
+<a href="https://github.com/Aider-AI/aider/blob/main/LICENSE.txt">Apache 2.0 license</a>.</p>
+<h2 id="can-i-script-aider">
+  
+  
+    <a href="#can-i-script-aider" class="anchor-heading" aria-labelledby="can-i-script-aider"><svg viewBox="0 0 16 16" aria-hidden="true"><use xlink:href="#svg-link"></use></svg></a> Can I Script Aider?
+  
+  
+</h2>
+    
+
+<p>Yes. You can script aider via the command line or python. See more from here: <a href="https://aider.chat/docs/scripting.html">Scripting aider</a></p>
+
+<div style="height:80vh"></div>
+
+          
+
+          
+        </main>
+        
+
+
+      </div>
+    </div>
+    
+      
+
+<div class="search-overlay"></div>
+
+    
+  </div>
+
+  
+</body>
+</html>
+

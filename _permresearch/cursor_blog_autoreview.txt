@@ -1,0 +1,387 @@
+ Governing agent autonomy with Auto-review · Cursor 
+ Skip to content Cursor 
+ Models ↓ Grok 
+ Evals 
+
+Product ↓ Agents 
+ Cloud 
+ Grok Bot  ↗ 
+ Mobile 
+ Automations 
+ CLI 
+ Marketplace  ↗ 
+ Review 
+
+Enterprise 
+ Pricing 
+ Resources ↓ Changelog 
+ Blog 
+ Docs 
+ Community 
+ Help  ↗ 
+ Workshops 
+ Forum  ↗ 
+ Careers 
+
+Models  → 
+ Product  → 
+ Enterprise 
+
+ Pricing 
+
+ Resources  → 
+
+Sign in Contact Contact sales Download 
+
+ Blog / research 
+
+Jun 11, 2026 · research 
+ Governing agent autonomy with Auto-review
+
+David Gomes & Travis McPeak · 8 min read 
+
+Table of Contents
+ ↑ Judging risk in context 
+ Building the classifier 
+ Designing the feedback loop 
+ Testing the classifier 
+ Minimizing outright blocks 
+ Refining agent autonomy 
+ 
+ To be their most productive for coding and other tasks, agents need a healthy level of autonomy. That means they should be able to operate independently, be creative, and accomplish work without stopping too often to ask for permission.
+
+ However, greater autonomy introduces security risks if agents take unintended actions. This is especially true for local agents, which often run near files, credentials, environment variables, MCP tools, and have access to production systems.
+
+ The easy answer is to ask the user before any action happens, but asking for permission too often creates its own safety problem. After enough repeated prompts, people stop reading carefully, and the approval flow becomes less meaningful.
+
+ This week we launched Auto-review, which makes decisions around agent autonomy behave more like a dial than a switch. The core idea is that an agent should be able to move freely when the stakes are low, but slow down when its next action crosses a meaningful boundary.
+
+ We determine where an action sits along that continuum with a specialized classifier agent that reviews actions in context before they run. Building it meant turning our intuition for how agent autonomy should be governed into a working model of consequence, intent, and feedback that we could test against real agent behavior.
+
+# Judging risk in context
+
+ Whether an agent action poses risk depends on the situation. The same command can be harmless in one workflow and unacceptable in another. What matters is the relationship between the action, the user's request, and the consequence of being wrong.
+
+ That recognition pushed us toward developing a "classifier" agent that would govern overall agent autonomy. We wanted it to be a small model, so that it stayed fast and inexpensive to run, while still making a nuanced judgment about whether the next action was consistent with the user's intent.
+
+ The central rule we gave the classifier was that it should be more lenient when the security stakes are lower, and more cautious when they're higher. With that broad understanding in place, we began building the classifier as a fast, contextual reviewer that could sit directly in the agent's execution path.
+
+ # Building the classifier
+
+ The first technical decision was model choice. The classifier runs before a tool call executes, so it sits directly in the agent loop and needs to be fast as well as accurate. Being a multi-model company helped here because we could try a wide range of models and reasoning modes, then choose the one that sat at the right point between speed and judgment.
+
+ One early surprise was that lower-reasoning models were not always faster. When a model struggled to understand the policy or the tool call, it could spend more time and tokens searching for what ultimately became a worse answer. The better trade-off was a small model with enough reasoning to make the decision cleanly.
+
+ We also made the classifier agentic, because some actions cannot be judged from the command alone. A command like python script.py might be safe or unsafe depending on what is inside the file, so the classifier can inspect the workspace with tools like ReadFile, Grep, Glob, and ListDir before deciding.
+
+ We avoided a separate classification endpoint, because an extra round trip would add latency directly before every reviewed tool call. Instead, the classifier runs in the same RPC stream as the parent agent, using an architecture similar to subagents.
+
+ # Designing the feedback loop
+
+ The next decision was what a block should do. We did not want the classifier to become another approval prompt generator. When it blocks an action, it returns an explanation to the parent agent, and the parent agent can often use that feedback to choose a safer path without interrupting the user.
+
+ User intent is what makes that feedback useful. The question is not whether an action looks risky in isolation. The question is whether the action is justified by what the user asked the agent to do. That is what lets normal development work keep moving while higher-consequence actions require a clearer signal from the user.
+
+ That design only works if the classifier is tuned against the actions it should let through and the ones it should stop, so we needed evals that covered both.
+
+ # Testing the classifier
+
+ Our first set of evals came from internal usage data to understand the normal shape of agent work. The classifier had to catch risky actions without blocking routine development work, and internal sessions were the best way to see that baseline. We started with roughly 12 hours of internal developer sessions, then cut that down and deduplicated common actions into 6,122 labeled rows.
+
+ We also needed synthetic data, because the worst cases do not appear often enough in normal usage. We generated cases where the agent might read secrets, touch production data, follow untrusted instructions, or take actions with large side effects. Those examples gave us coverage for the failures we most wanted the classifier to catch.
+
+The policy changed as we learned, which made the data work more complicated. When we changed the categories of behavior the classifier should recognize, we had to relabel or rematerialize the eval set. Otherwise, we would be testing the current classifier against an outdated understanding of the problem.
+
+ We ran the evals through the same backend classifier loop used in production. That let us test the full path, including tool use, final classification, model overrides, and parse failures. The evals checked the final allow or block decision, along with the context the classifier used when it needed to inspect the workspace before deciding.
+
+ We also looked for flapping. If the same case allowed six times and blocked four times, that usually meant the policy or prompt was underspecified. Repeated runs gave us a way to find those unstable cases and tighten the classifier until its behavior was more consistent.
+
+ # Minimizing outright blocks
+
+ In practice, only a small share of agent actions need to be reviewed by the classifier. Many commands are already covered by allowlists or sandboxing, so the classifier mostly runs when the action needs contextual judgment.
+
+ When the classifier does run, it currently blocks around 4% of actions, though a block does not immediately become a user prompt. The classifier sends an explanation back to the parent agent, which can often narrow the action, choose a different tool, or avoid the risky step entirely.
+
+ Some blocks from the classifier become user interruptions, but globally we're seeing that only about 7% of total chats in Auto-review mode lead to at least one interruption. To put that in perspective, some enterprise customers we're working with previously saw roughly 40% of actions blocked within their organization.
+
+ This early data is consistent with the main product behavior we wanted. The classifier rarely interrupts the user directly, and in most blocked cases the parent agent can use the feedback to continue in a safer, narrower way.
+
+ # Refining agent autonomy
+
+ Auto-review is still early, and our understanding of the autonomy continuum will keep changing as agents become more capable. Today, it is focused on local agents in the desktop app, and we expect the same ideas to shape how we govern agent autonomy in more places over time.
+
+ We want agents to have real autonomy, while making the decision to slow them down depend on context rather than a single global permission setting. The classifier lets us improve safety without turning autonomy back into a stream of approval prompts. It catches actions that need more scrutiny, gives the parent agent feedback, and lets the agent keep working when there is a safer way to proceed.
+
+ Auto-review is now the default for new users. For existing users, you can enable it in Settings > Agents. 
+
+ Filed under: research 
+ Authors: David Gomes & Travis McPeak
+
+Related posts
+
+ Feb 18, 2026 · Research 
+ Implementing a secure sandbox for local agents
+
+Ani, Yash & Alex · 6 min read 
+
+Jul 20, 2026 · Research 
+ Agent swarms and the new model economics
+
+Wilson Lin · 17 min read 
+
+Jul 14, 2026 · Research 
+ Grok 4.5 Model Card
+
+Cursor Team · 1 min read 
+
+View more posts → 
+
+Product
+ Agents 
+ Teams 
+ Enterprise 
+ Pricing 
+ Code Review 
+ CLI 
+ Cloud Agents 
+ Composer 
+ Marketplace  ↗ 
+ 
+ Resources
+ Download 
+ Changelog 
+ Docs 
+ Learn  ↗ 
+ Forum  ↗ 
+ Help  ↗ 
+ Workshops 
+ Status  ↗ 
+ 
+ Company
+ Careers 
+ Blog 
+ Community 
+ Students 
+ Brand 
+ Future 
+ Anysphere  ↗ 
+ 
+ Legal
+ Terms of Service 
+ Acceptable Use Policy 
+ Grok Bot Terms 
+ Privacy Policy 
+ Cookie Policy 
+ Data Use 
+ Security 
+ 
+ Connect
+ X  ↗ 
+ LinkedIn  ↗ 
+ YouTube  ↗ 
+
+© 2026 Anysphere, Inc. 🛡 SOC 2 | ISO27001 | ISO42001 | AIUC-1 Certified 
+ 🌐 English ↓ English ✓ 
+ 简体中文 
+ 日本語 
+ 繁體中文 
+ Español 
+ Français 
+ Português 
+ 한국어 
+ Deutsch 
+ हिन्दी 
+
+Skip to content Cursor 
+ Models ↓ Grok 
+ Evals 
+
+Product ↓ Agents 
+ Cloud 
+ Grok Bot  ↗ 
+ Mobile 
+ Automations 
+ CLI 
+ Marketplace  ↗ 
+ Review 
+
+Enterprise 
+ Pricing 
+ Resources ↓ Changelog 
+ Blog 
+ Docs 
+ Community 
+ Help  ↗ 
+ Workshops 
+ Forum  ↗ 
+ Careers 
+
+Models  → 
+ Product  → 
+ Enterprise 
+
+ Pricing 
+
+ Resources  → 
+
+Sign in Contact Contact sales Download 
+
+ Blog / research 
+
+Jun 11, 2026 · research 
+ Governing agent autonomy with Auto-review
+
+David Gomes & Travis McPeak · 8 min read 
+
+Table of Contents
+ ↑ Judging risk in context 
+ Building the classifier 
+ Designing the feedback loop 
+ Testing the classifier 
+ Minimizing outright blocks 
+ Refining agent autonomy 
+ 
+ To be their most productive for coding and other tasks, agents need a healthy level of autonomy. That means they should be able to operate independently, be creative, and accomplish work without stopping too often to ask for permission.
+
+ However, greater autonomy introduces security risks if agents take unintended actions. This is especially true for local agents, which often run near files, credentials, environment variables, MCP tools, and have access to production systems.
+
+ The easy answer is to ask the user before any action happens, but asking for permission too often creates its own safety problem. After enough repeated prompts, people stop reading carefully, and the approval flow becomes less meaningful.
+
+ This week we launched Auto-review, which makes decisions around agent autonomy behave more like a dial than a switch. The core idea is that an agent should be able to move freely when the stakes are low, but slow down when its next action crosses a meaningful boundary.
+
+ We determine where an action sits along that continuum with a specialized classifier agent that reviews actions in context before they run. Building it meant turning our intuition for how agent autonomy should be governed into a working model of consequence, intent, and feedback that we could test against real agent behavior.
+
+# Judging risk in context
+
+ Whether an agent action poses risk depends on the situation. The same command can be harmless in one workflow and unacceptable in another. What matters is the relationship between the action, the user's request, and the consequence of being wrong.
+
+ That recognition pushed us toward developing a "classifier" agent that would govern overall agent autonomy. We wanted it to be a small model, so that it stayed fast and inexpensive to run, while still making a nuanced judgment about whether the next action was consistent with the user's intent.
+
+ The central rule we gave the classifier was that it should be more lenient when the security stakes are lower, and more cautious when they're higher. With that broad understanding in place, we began building the classifier as a fast, contextual reviewer that could sit directly in the agent's execution path.
+
+ # Building the classifier
+
+ The first technical decision was model choice. The classifier runs before a tool call executes, so it sits directly in the agent loop and needs to be fast as well as accurate. Being a multi-model company helped here because we could try a wide range of models and reasoning modes, then choose the one that sat at the right point between speed and judgment.
+
+ One early surprise was that lower-reasoning models were not always faster. When a model struggled to understand the policy or the tool call, it could spend more time and tokens searching for what ultimately became a worse answer. The better trade-off was a small model with enough reasoning to make the decision cleanly.
+
+ We also made the classifier agentic, because some actions cannot be judged from the command alone. A command like python script.py might be safe or unsafe depending on what is inside the file, so the classifier can inspect the workspace with tools like ReadFile, Grep, Glob, and ListDir before deciding.
+
+ We avoided a separate classification endpoint, because an extra round trip would add latency directly before every reviewed tool call. Instead, the classifier runs in the same RPC stream as the parent agent, using an architecture similar to subagents.
+
+ # Designing the feedback loop
+
+ The next decision was what a block should do. We did not want the classifier to become another approval prompt generator. When it blocks an action, it returns an explanation to the parent agent, and the parent agent can often use that feedback to choose a safer path without interrupting the user.
+
+ User intent is what makes that feedback useful. The question is not whether an action looks risky in isolation. The question is whether the action is justified by what the user asked the agent to do. That is what lets normal development work keep moving while higher-consequence actions require a clearer signal from the user.
+
+ That design only works if the classifier is tuned against the actions it should let through and the ones it should stop, so we needed evals that covered both.
+
+ # Testing the classifier
+
+ Our first set of evals came from internal usage data to understand the normal shape of agent work. The classifier had to catch risky actions without blocking routine development work, and internal sessions were the best way to see that baseline. We started with roughly 12 hours of internal developer sessions, then cut that down and deduplicated common actions into 6,122 labeled rows.
+
+ We also needed synthetic data, because the worst cases do not appear often enough in normal usage. We generated cases where the agent might read secrets, touch production data, follow untrusted instructions, or take actions with large side effects. Those examples gave us coverage for the failures we most wanted the classifier to catch.
+
+The policy changed as we learned, which made the data work more complicated. When we changed the categories of behavior the classifier should recognize, we had to relabel or rematerialize the eval set. Otherwise, we would be testing the current classifier against an outdated understanding of the problem.
+
+ We ran the evals through the same backend classifier loop used in production. That let us test the full path, including tool use, final classification, model overrides, and parse failures. The evals checked the final allow or block decision, along with the context the classifier used when it needed to inspect the workspace before deciding.
+
+ We also looked for flapping. If the same case allowed six times and blocked four times, that usually meant the policy or prompt was underspecified. Repeated runs gave us a way to find those unstable cases and tighten the classifier until its behavior was more consistent.
+
+ # Minimizing outright blocks
+
+ In practice, only a small share of agent actions need to be reviewed by the classifier. Many commands are already covered by allowlists or sandboxing, so the classifier mostly runs when the action needs contextual judgment.
+
+ When the classifier does run, it currently blocks around 4% of actions, though a block does not immediately become a user prompt. The classifier sends an explanation back to the parent agent, which can often narrow the action, choose a different tool, or avoid the risky step entirely.
+
+ Some blocks from the classifier become user interruptions, but globally we're seeing that only about 7% of total chats in Auto-review mode lead to at least one interruption. To put that in perspective, some enterprise customers we're working with previously saw roughly 40% of actions blocked within their organization.
+
+ This early data is consistent with the main product behavior we wanted. The classifier rarely interrupts the user directly, and in most blocked cases the parent agent can use the feedback to continue in a safer, narrower way.
+
+ # Refining agent autonomy
+
+ Auto-review is still early, and our understanding of the autonomy continuum will keep changing as agents become more capable. Today, it is focused on local agents in the desktop app, and we expect the same ideas to shape how we govern agent autonomy in more places over time.
+
+ We want agents to have real autonomy, while making the decision to slow them down depend on context rather than a single global permission setting. The classifier lets us improve safety without turning autonomy back into a stream of approval prompts. It catches actions that need more scrutiny, gives the parent agent feedback, and lets the agent keep working when there is a safer way to proceed.
+
+ Auto-review is now the default for new users. For existing users, you can enable it in Settings > Agents. 
+
+ Filed under: research 
+ Authors: David Gomes & Travis McPeak
+
+Related posts
+
+ Feb 18, 2026 · Research 
+ Implementing a secure sandbox for local agents
+
+Ani, Yash & Alex · 6 min read 
+
+Jul 20, 2026 · Research 
+ Agent swarms and the new model economics
+
+Wilson Lin · 17 min read 
+
+Jul 14, 2026 · Research 
+ Grok 4.5 Model Card
+
+Cursor Team · 1 min read 
+
+View more posts → 
+
+Product
+ Agents 
+ Teams 
+ Enterprise 
+ Pricing 
+ Code Review 
+ CLI 
+ Cloud Agents 
+ Composer 
+ Marketplace  ↗ 
+ 
+ Resources
+ Download 
+ Changelog 
+ Docs 
+ Learn  ↗ 
+ Forum  ↗ 
+ Help  ↗ 
+ Workshops 
+ Status  ↗ 
+ 
+ Company
+ Careers 
+ Blog 
+ Community 
+ Students 
+ Brand 
+ Future 
+ Anysphere  ↗ 
+ 
+ Legal
+ Terms of Service 
+ Acceptable Use Policy 
+ Grok Bot Terms 
+ Privacy Policy 
+ Cookie Policy 
+ Data Use 
+ Security 
+ 
+ Connect
+ X  ↗ 
+ LinkedIn  ↗ 
+ YouTube  ↗ 
+
+© 2026 Anysphere, Inc. 🛡 SOC 2 | ISO27001 | ISO42001 | AIUC-1 Certified 
+ 🌐 English ↓ English ✓ 
+ 简体中文 
+ 日本語 
+ 繁體中文 
+ Español 
+ Français 
+ Português 
+ 한국어 
+ Deutsch 
+ हिन्दी 
+

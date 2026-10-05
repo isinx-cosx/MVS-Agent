@@ -1,0 +1,99 @@
+﻿  从偏移 4861 到 6485，共 1625 字符
+
+(_deepseek_ai_dsh_api_workspace_controller_workspace_follow_result$schema$value ??= z.union([z.object({
+
+  'type': z.literal("baseline").readonly(),
+
+  'value': z.object({
+
+  'items': z.array(z.object({
+
+  'workspaceId': z.intersection(z.string(),
+ z.unknown()).readonly(),
+
+  'path': z.string().readonly(),
+
+  'title': z.string().readonly(),
+
+  'sessionIds': z.array(z.intersection(z.string(),
+ z.unknown())).readonly(),
+
+  'createdAt': z.string().readonly(),
+
+  'updatedAt': z.string().readonly(),
+
+
+})).readonly(),
+
+  'archivedSessionIds': z.array(z.intersection(z.string(),
+ z.unknown())).readonly(),
+
+  'pinnedSessionIds': z.array(z.intersection(z.string(),
+ z.unknown())).readonly(),
+
+
+}).readonly(),
+
+
+}),
+ z.object({
+
+  'type': z.literal("upsert").readonly(),
+
+  'workspace': z.object({
+
+  'workspaceId': z.intersection(z.string(),
+ z.unknown()).readonly(),
+
+  'path': z.string().readonly(),
+
+  'title': z.string().readonly(),
+
+  'sessionIds': z.array(z.intersection(z.string(),
+ z.unknown())).readonly(),
+
+  'createdAt': z.string().readonly(),
+
+  'updatedAt': z.string().readonly(),
+
+
+}).readonly(),
+
+
+}),
+ z.object({
+
+  'type': z.literal("remove").readonly(),
+
+  'workspaceId': z.intersection(z.string(),
+ z.unknown()).readonly(),
+
+
+}),
+ z.object({
+
+  'type': z.literal("order").readonly(),
+
+  'workspaceIds': z.array(z.intersection(z.string(),
+ z.unknown())).readonly(),
+
+
+}),
+ z.object({
+
+  'type': z.literal("archived").readonly(),
+
+  'archivedSessionIds': z.array(z.intersection(z.string(),
+ z.unknown())).readonly(),
+
+
+}),
+ z.object({
+
+  'type': z.literal("pinned").readonly(),
+
+  'pinnedSessionIds': z.array(z.intersection(z.string(),
+ z.unknown())).readonly(),
+
+
+})]))

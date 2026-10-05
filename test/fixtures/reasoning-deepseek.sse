@@ -1,0 +1,16 @@
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1730000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1730000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"用户问的是"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1730000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"事件溯源，我应该先解释它是什么。"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1730000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"事件溯源是把状态"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1730000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"存成事件序列。"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1730000000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1730000000,"model":"deepseek-reasoner","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":30,"total_tokens":50}}
+
+data: [DONE]
+

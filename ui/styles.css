@@ -1,0 +1,1911 @@
+/*
+ * 样式。刻意很少：这是一个"上面看对话、下面打字"的界面，
+ * 唯一需要设计的是**层级**（已落盘 / 正在生成 / 错误）要一眼分得清。
+ */
+
+/*
+ * 两套配色都写在这里，由 JS 在 `<html data-theme="light|dark">` 上选一个。
+ *
+ * ⚠️ **不再用 `@media (prefers-color-scheme)`。** 设置页里"跟随系统"是一个选项，
+ * 而不是唯一行为；用媒体查询就没法让用户覆盖它（浅色系统上想用深色做不到）。
+ * 现在的分工是：JS 把"跟随系统"解析成具体值再写上去，CSS 只管两个确定的状态。
+ *
+ * `color-scheme` 跟着一起切 —— 否则滚动条和表单控件仍然是另一套色。
+ */
+:root {
+  color-scheme: light;
+  /* 正文字号由设置页写入（见 ui/settings.ts） */
+  --font-size: 15px;
+  --fg: #1b1b1f;
+  --dim: #6b6b76;
+  --line: #e3e3e8;
+  --bg: #ffffff;
+  --user: #f1f2f6;
+  --think: #8a8a94;
+  --err: #b3261e;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --fg: #e8e8ea;
+  --dim: #9a9aa4;
+  --line: #2e2e34;
+  --bg: #16161a;
+  --user: #24242b;
+  --think: #8f8f99;
+  --err: #f2b8b5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/*
+ * ⚠️ **页面本身绝对不能滚。**
+ *
+ * `#root` 是纵向 flex、`#log` 是 `flex:1` 的可滚动区。但 flex 子项的
+ * `min-height` 默认是 `auto` —— 内容一旦高过视口，它**拒绝收缩**，于是
+ * `#root` 被撑到超过 100%，**整个文档跟着滚**。正文每长一段页面长度就变一次，
+ * 看起来就是"整页上下抖"。
+ *
+ * 两道保险：页面不许滚；可滚动的那一项显式 `min-height: 0`。
+ */
+body {
+  background: var(--bg);
+  color: var(--fg);
+  /* 字号来自设置页（`--font-size` 由 JS 写在 :root 上） */
+  font: var(--font-size) / 1.65 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+#root {
+  display: flex;
+  /* 横向：左侧栏 + 对话区那一列 */
+  flex-direction: row;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── 左侧栏：工作区与对话 ───────────────────────────────────────────────
+ *
+ * 这一步只搭界面，动作还没接线（见 App.tsx 里 `Sidebar` 的注释）。
+ * 行用 `button` 是为了让"可点"这件事在视觉上是真的 —— 现在点了不做事。
+ */
+#sidebar {
+  flex: none;
+  /* 宽度由 JS 写在行内样式上（拖拽时直接改这个值）；236px 只是没拖过时的样子 */
+  width: 236px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  /*
+   * ★ **给滚动条留位置。**
+   *
+   * 侧栏内容一多就会出纵向滚动条，而它默认**盖在内容上**（经典滚动条）——
+   * 最右边那些控件会被压在下面或者截掉。加号就是这么消失的：按钮在、位置也占着，
+   * 但被滚动条吃掉了一截，16px 的字形正好落在看不见的那部分。
+   *
+   * `stable` 让滚动槽一直占着宽度（有没有滚动条都一样），内容就不会再被压。
+   */
+  scrollbar-gutter: stable;
+  padding: 14px 10px;
+  background: var(--bg);
+}
+
+/*
+ * 拖拽分隔条。
+ *
+ * 它自己占 6px（好点的命中区域），左右各 `-3px` 的外负边距让它**净宽为 0** ——
+ * 于是侧栏与对话区仍然严丝合缝，而这条 6px 的带子正好压在交界处。
+ * 那条 1px 的分割线由 `::after` 画（原来在 `#sidebar` 的右边框上，挪过来是为了
+ * 让悬停时整条带子一起亮，读起来就是"这里可以拖"）。
+ *
+ * `touch-action: none` 是必须的：否则触屏上这个手势会被当成滚动，拖的时候页面跟着动。
+ */
+#splitter {
+  flex: none;
+  width: 6px;
+  margin-left: -3px;
+  margin-right: -3px;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+  position: relative;
+  z-index: 1;
+}
+
+#splitter::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: var(--line);
+}
+
+#splitter:hover,
+#splitter:focus-visible {
+  background: var(--line);
+  outline: none;
+}
+
+.side-section {
+  margin-bottom: 16px;
+}
+
+.side-section h2 {
+  margin: 0 0 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.side-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* 对话相对工作区缩进一级 —— 分组关系要看得出来 */
+.side-list.inset {
+  padding-left: 10px;
+}
+
+/* 工作区分组头：一行里放"折叠开关"和一个"加号" */
+.side-group {
+  margin-bottom: 2px;
+}
+
+.side-group-head {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.side-group-head:hover {
+  background: var(--user);
+}
+
+.side-group-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.side-group-toggle .chev {
+  flex: none;
+  color: var(--dim);
+  transition: transform 0.12s ease;
+}
+
+.side-group-toggle[aria-expanded='true'] .chev {
+  transform: rotate(90deg);
+}
+
+.side-group-toggle .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.side-group-toggle .count {
+  flex: none;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * "在这个工作区新建对话"。
+ *
+ * ⚠️ **看得见是第一要求。** 这里先后犯过两次错：
+ *   1. `opacity: 0`（悬停才出现）—— 用户直接说"根本没有这个按钮"；
+ *   2. 改成弱色细线之后，在截图里仍然认不出来 —— 一个 12px、1.6px 描边的
+ *      `--dim` 灰十字，在 236px 宽的侧栏里几乎不可见。
+ *
+ * 所以现在给它**实体感**：默认就带浅底（`--user`）、用主色描边、放大到 14px。
+ * 弱化文字可以靠颜色，但"这里有一个按钮"不能靠让用户去找。
+ */
+.side-group-add {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: var(--user);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.side-group-add:hover:not(:disabled) {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.side-group-add:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.add-busy {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* 文字加号：字号与行高写死，避免跟着父级字体度量跑偏 */
+.add-plus {
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 500;
+}
+
+/*
+ * 界面崩溃时的横幅（见 main.tsx）。
+ * 固定定位、压在右上角：既不参与布局，也不会被别的东西盖住。
+ */
+.crash {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 10px 12px;
+  border: 1px solid var(--err);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--err);
+  font-size: 12px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+}
+
+.crash-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.crash-detail {
+  margin: 0;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+/* ── 设置页 ─────────────────────────────────────────────────────────────
+ *
+ * 它占据主区域（不是弹窗）：主区域空着也是空着，而设置项只会变多。
+ * 结构是"标题 + 若干段"，每段里一行一项：左边说明、右边控件。
+ */
+#settings {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* 只让右边的面板滚，标题与分类栏都留在原地 */
+  overflow: hidden;
+  padding: 24px 16px 0;
+}
+
+#settings > * {
+  width: 100%;
+  max-width: 860px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.set-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+/* 左分类 + 右面板 */
+.set-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 20px;
+}
+
+.set-nav {
+  flex: none;
+  width: 168px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.set-nav-item {
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.set-nav-item:hover {
+  background: var(--user);
+}
+
+.set-nav-item.on {
+  background: var(--user);
+}
+
+.set-nav-item .name {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.set-nav-item .hint {
+  display: block;
+  margin-top: 1px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.set-pane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding-bottom: 32px;
+}
+
+/* 窄屏：分类改成横排，面板在上面 */
+@media (max-width: 720px) {
+  .set-body {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .set-nav {
+    width: 100%;
+    flex-direction: row;
+    gap: 6px;
+    padding-bottom: 0;
+  }
+
+  .set-nav-item {
+    width: auto;
+    flex: 1;
+    text-align: center;
+  }
+
+  .set-nav-item .hint {
+    display: none;
+  }
+}
+
+/* ── 窄屏：侧栏变成抽屉 ─────────────────────────────────────────────────
+ *
+ * 720px 以下原来是把侧栏 `display: none` —— 于是**没有任何入口能看到会话列表、
+ * 切换会话或新建对话**（不是"不方便"，是"没有"）。现在改成抽屉：
+ * 汉堡按钮拉出来、点遮罩收回去、选中会话自动收起。
+ *
+ * ⚠️ 宽屏下 CSS 完全不动侧栏（`#sidebar` 的常态规则没变），所以拖拽宽度、
+ * 常驻显示这些行为一点没受影响。
+ */
+.drawer-toggle,
+.drawer-backdrop {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  /* 窄屏下那条分隔条没有意义（侧栏不再占位） */
+  #splitter {
+    display: none;
+  }
+
+  .drawer-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 30;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--fg);
+    cursor: pointer;
+  }
+
+  /* 遮罩：只在展开时铺满，点它就关 */
+  .drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgb(0 0 0 / 35%);
+  }
+
+  #sidebar {
+    /*
+     * ⚠️ `display` 必须显式写。
+     *
+     * 原来这里（窄屏档）有一条 `#sidebar { display: none }` —— 我加抽屉时只写了
+     * position/transform，**没写 display**，于是 `display: none` 照样生效，
+     * 抽屉根本不会出现 ✗。那条旧规则已经删掉，这里再显式写一次：**不靠"别处没有
+     * 相反的声明"来保证自己能显示**。
+     */
+    display: flex;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 50;
+    /* 抽屉宽度不跟拖拽值（拖拽值在窄屏上可能过宽）—— 取屏宽与 320 的较小者 */
+    width: min(84vw, 320px) !important;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+    box-shadow: 0 0 24px rgb(0 0 0 / 18%);
+  }
+
+  #sidebar[data-open='true'] {
+    transform: translateX(0);
+  }
+
+  /* 给汉堡按钮让出地方，免得盖住第一条消息 */
+  #log > .inner {
+    padding-top: 34px;
+  }
+}
+
+.set-head h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.set-head-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.set-head-actions .side-action {
+  width: auto;
+  padding: 6px 10px;
+}
+
+.set-section {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.set-section h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.set-note {
+  margin: 0 0 10px;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 一行设置：左说明、右控件。窄了就换行 */
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+/* 每一类里的第一行不该有顶部分隔线 */
+.set-section .set-note + .set-row,
+.set-section .set-row:first-child {
+  border-top: none;
+}
+
+.set-label {
+  flex: 1;
+  min-width: 180px;
+}
+
+.set-hint {
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.set-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.set-value {
+  flex: none;
+  max-width: 55%;
+  color: var(--dim);
+  font-size: 12px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 分段选择器 */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.seg-item {
+  padding: 5px 10px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.seg-item + .seg-item {
+  border-left: 1px solid var(--line);
+}
+
+.seg-item.on {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+/* 开关 */
+.switch {
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.switch .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.switch.on {
+  background: var(--fg);
+  border-color: var(--fg);
+}
+
+.switch.on .knob {
+  background: var(--bg);
+  transform: translateX(16px);
+}
+
+/* 加减 */
+.steps {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.step {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.step-value {
+  min-width: 30px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.confirm {
+  display: flex;
+  gap: 8px;
+}
+
+.confirm .side-action {
+  width: auto;
+  padding: 6px 10px;
+}
+
+/* 有破坏性的动作：只在这一处用红 —— 它确实不可撤销 */
+.side-action.danger {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+/* 图片策略选"不显示"时的替代文字 */
+.md-img-hidden {
+  color: var(--dim);
+  font-size: 13px;
+}
+
+/* "当前"这种小标记：跟在名称后面，不抢视线但要看得见 */
+.set-tag {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 400;
+  vertical-align: 1px;
+}
+
+.side-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.side-item:hover {
+  background: var(--user);
+}
+
+/* 当前项：`--user` 是消息气泡那层的浅色，这里正好当选中底色 */
+.side-item.active {
+  background: var(--user);
+}
+
+.side-item .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.side-item .count,
+.side-item .time {
+  flex: none;
+  color: var(--dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * 会话行：`div` 包"选择区 + 改名 + 删除"。
+ *
+ * ⚠️ 行不能是单个 `<button>` —— 按钮不能套按钮（非法 HTML，浏览器会拆开它）。
+ * 这个坑在"工作区头加号"那里踩过一次。
+ */
+.side-item {
+  padding: 0;
+  gap: 0;
+}
+
+/* 选择区：占满剩余宽度，点它切过去 */
+.side-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 4px 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 行内小动作（改 / 删）：小、暗，但**一直看得见** —— 悬停才出现等于不存在 */
+.side-mini {
+  flex: none;
+  padding: 2px 5px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.side-mini:hover {
+  background: var(--bg);
+  color: var(--fg);
+  opacity: 1;
+}
+
+.side-mini.danger:hover {
+  color: var(--err);
+}
+
+/* 二次确认：占满整行，把后果写出来 */
+.side-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px 5px 8px;
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.side-confirm > span {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 改名输入框：就地编辑 */
+.side-rename {
+  flex: 1;
+  min-width: 0;
+  margin: 4px 6px 4px 8px;
+  padding: 4px 6px;
+  border: 1px solid var(--dim);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+/* ── 会话搜索 ─────────────────────────────────────────────────────────── */
+.side-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 8px 8px;
+}
+
+.side-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.side-search input:focus {
+  border-color: var(--dim);
+}
+
+/* ── 自己写的下拉框 ─────────────────────────────────────────────────────
+ *
+ * 原生 `<select>` 的弹层由系统画，改不了字体/间距/圆角 ✓ —— 而这一行并排摆着
+ * 两个控件，差别最明显 ✗。所以自己写；代价（点外部关闭、Esc、ARIA）在
+ * `Dropdown` 的注释里逐条补回来了 ✓。
+ */
+.dd {
+  position: relative;
+  flex: none;
+}
+
+.dd-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dd-button:hover:not(:disabled) {
+  border-color: var(--dim);
+}
+
+.dd-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.dd-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dd-caret {
+  flex: none;
+  color: var(--dim);
+  font-size: 9px;
+  line-height: 1;
+}
+
+/* 弹层：从按钮下沿展开，宽度跟着内容但不超出屏幕 */
+.dd-panel {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 100%;
+  max-width: min(320px, 76vw);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 16%);
+}
+
+.dd-group + .dd-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.dd-group-title {
+  padding: 3px 8px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.dd-item {
+  display: block;
+  width: 100%;
+  padding: 5px 8px 5px 10px;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.dd-item:hover {
+  background: var(--user);
+}
+
+/* 当前项：底色 + 左侧粗边 —— **不用对勾**（这界面里不拿符号当标记 ✓） */
+.dd-item.on {
+  border-left-color: var(--fg);
+  background: var(--user);
+  font-weight: 600;
+}
+/* ── 供应商卡片 ─────────────────────────────────────────────────────────
+ *
+ * 一张卡片 = 一个供应商，卡片上**只有一个按钮**：修改 ✓
+ *（"切到此"已经搬去输入框下面那一行了 —— 换模型是高频动作，摆在这里要点三次 ✓）。
+ * 展开的卡片把编辑表单一并装进来（不是弹出层 —— 设置页本身就是一个整页，
+ * 再叠一个浮层只会让人分不清哪个在上面 ✓）。
+ */
+.prov-card {
+  margin: 0 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.prov-card.open {
+  border-color: var(--dim);
+}
+
+.prov-head {
+  padding: 10px 12px;
+}
+
+.prov-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.prov-name {
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.prov-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* 展开区：底色略深，和卡片头分开 */
+.prov-body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--user);
+}
+
+.prov-add {
+  margin: 12px 0 4px;
+}
+
+/* ── 表单 ─────────────────────────────────────────────────────────────── */
+.set-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.set-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.set-field > span {
+  flex: none;
+  width: 68px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.set-field > input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.set-field > input:focus {
+  border-color: var(--dim);
+}
+
+.set-form-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.set-sub {
+  margin: 16px 0 6px;
+  font-size: 13px;
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.prov-actions .side-action,
+.prov-add .side-action,
+.set-form-foot .side-action {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.prov-actions .side-action:hover:not(:disabled),
+.prov-add .side-action:hover:not(:disabled),
+.set-form-foot .side-action:hover:not(:disabled) {
+  border-color: var(--dim);
+}
+
+.prov-actions .side-action:disabled,
+.set-form-foot .side-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 「还有 N 条更早的」—— 它是出口，不是装饰，所以做成整行可点 */
+.side-more {
+  width: 100%;
+  margin: 2px 0;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.side-more:hover {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* 删除工作区的那个 ×：和加号同形，但走危险色 */
+.side-group-add.danger:hover:not(:disabled) {
+  color: var(--err);
+}
+
+/* 会话状态点：颜色由 `data-status` 决定，不认识的取值就当空闲 */
+.side-item .dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.side-item .dot[data-status='running'] {
+  background: var(--fg);
+}
+
+.side-item .dot[data-status='interrupted'] {
+  background: var(--err);
+}
+
+.side-empty {
+  padding: 4px 8px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.side-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.side-action {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.side-action:hover {
+  border-color: var(--dim);
+  color: var(--fg);
+}
+
+.side-error {
+  padding: 6px 8px;
+  color: var(--err);
+  font-size: 12px;
+}
+
+/* 窄屏：侧栏改用抽屉形态，见下面那段（原来这里是 `display: none`） */
+
+/* 对话区那一列：滚动区 + 悬浮输入框都在这里面定位 */
+#main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* 对话区：唯一会长的地方 */
+#log {
+  flex: 1;
+  /* ★ 关键的一行：允许这个 flex 子项收缩到比内容矮，滚动才不会溢出到页面上 */
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 16px 8px;
+  /*
+   * 底部留出悬浮输入框的高度 —— 否则最后一条消息会被它盖住。
+   *
+   * 这个值由 JS 量出来写进 `--composer-h`（输入框会随内容变高，写死一个数不够）。
+   * 兜底 96px 是"一行 + 内边距 + 下边距"的量级，只在 JS 还没跑时用一下。
+   */
+  padding-bottom: calc(var(--composer-h, 96px) + 12px);
+  /*
+   * 关掉浏览器的滚动锚定：它会和"每帧滚到底"互相拉扯 —— 内容长了它想把视口
+   * 钉在某个元素上，我们又设 `scrollTop`，流式期间每 40ms 一次。定位只留一个主人。
+   */
+  overflow-anchor: none;
+}
+
+#log > .inner {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.msg {
+  margin: 0 0 18px;
+}
+
+.msg.user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.msg.user .body {
+  background: var(--user);
+  border-radius: 12px;
+  padding: 8px 12px;
+  max-width: 85%;
+}
+
+.msg .body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg.tool .body {
+  color: var(--dim);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+}
+
+/* 思考：进行中展开、结束后收起（由组件按状态控制） */
+details.think {
+  margin: 0 0 6px;
+}
+
+details.think > summary {
+  cursor: pointer;
+  color: var(--think);
+  font-size: 13px;
+  list-style: none;
+  user-select: none;
+}
+
+details.think > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.think > summary::before {
+  content: "▸ ";
+}
+
+details.think[open] > summary::before {
+  content: "▾ ";
+}
+
+details.think > .text {
+  color: var(--think);
+  font-size: 13px;
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+  margin-top: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+/* 正在生成的光标 */
+.caret::after {
+  content: "▍";
+  color: var(--think);
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.note {
+  color: var(--dim);
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+
+/*
+ * 正在生成那一块的计数：思考/正文字数、已跑时长。
+ *
+ * `nowrap` + `tabular-nums`：这些数字**每秒都在变**，若让它换行或字宽不等，
+ * 每次刷新都会把下面的内容顶一下 —— 那也是"一上一下"的来源之一。
+ */
+.meta {
+  color: var(--dim);
+  font-size: 12px;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * 阻断提示。
+ * 它不是"出错了"，而是"需要你做决定" —— 所以用中性边框，并且**必须带动作**：
+ * 没有动作的阻断等于把用户锁在门外。
+ */
+.blocked {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--fg);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 14px;
+  font-size: 14px;
+}
+
+.blocked-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+/*
+ * 审批卡片：和"结果未知"那张同形，但它是**此刻**要你点头的东西，
+ * 所以左边那道竖线用主色而不是灰 —— 一眼能分出"要我做决定"和"提醒我一下"。
+ */
+.blocked.approval {
+  border-left-color: var(--fg);
+}
+
+.blocked.approval code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--user);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* ── 工具调用块 ─────────────────────────────────────────────────────────
+ *
+ * 默认收起时是**一行**：工具名 + 参数摘要。这样一屏能看完整轮做了什么，
+ * 想细看再展开。左边那道细线是"这里是机器做的动作"的标记。
+ */
+.tool-call {
+  margin: 6px 0;
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
+}
+
+/* 还在跑的那次：虚一点，和已完成的区分开 */
+.tool-call.waiting {
+  border-left-style: dashed;
+}
+
+.tool-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-head:hover {
+  background: var(--user);
+}
+
+.tool-head .chev {
+  flex: none;
+  color: var(--dim);
+  transition: transform 0.12s ease;
+}
+
+.tool-head[aria-expanded='true'] .chev {
+  transform: rotate(90deg);
+}
+
+.tool-name {
+  flex: none;
+  font-weight: 600;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.tool-summary {
+  flex: 1;
+  min-width: 0;
+  color: var(--dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tool-body {
+  margin: 4px 0 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tool-pre {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--user);
+  color: var(--fg);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 返回：底色更淡一点，和参数分开 */
+.tool-pre.out {
+  background: transparent;
+}
+
+.tool-empty {
+  color: var(--dim);
+  font-size: 12px;
+  padding: 2px 4px;
+}
+
+/*
+ * 抖动读数（仅 `?debug`）。
+ *
+ * ⚠️ **`position: fixed` 是必须的，不是审美选择。**
+ * 这个读数每来一个位移就更新一次；若它参与正常布局，自己一变就把页面推一下 ——
+ * 等于用污染源去测污染。固定定位 + `pointer-events: none`（不挡点击）
+ * 让它既可见又完全不影响被测对象。
+ */
+.jitter {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 10;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.error {
+  color: var(--err);
+  font-size: 13px;
+  border: 1px solid var(--err);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 0 0 14px;
+  white-space: pre-wrap;
+}
+
+/*
+ * 贴底的那一整块：输入框 + 它下面的指标行。
+ *
+ * ⚠️ **绝对定位在这一层，不在表单上。** 指标行必须在表单**外面**（它是"读"的东西），
+ * 但又必须和输入框同属一块 —— 否则它会成为 `#main` 的普通 flex 子项贴在底部，
+ * 而输入框也贴底，两者重叠。
+ *
+ * 这样分层的效果正是想要的那个：**指标行把卡片顶上去**，而不是压住它。
+ */
+#bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 8px 16px 14px;
+  /*
+   * 底部渐变：对话内容滚到输入框后面时淡出，而不是被一条硬边切断。
+   *
+   * `pointer-events: none` + 里面各层 `auto`：只有真正的内容接收事件，
+   * 周围的空白仍然可以把滚轮交给下面的对话区。
+   */
+  background: linear-gradient(to top, var(--bg) 60%, transparent);
+  pointer-events: none;
+}
+
+/* 表单现在只是这一块里的普通成员 —— 定位与背景都在 `#bottom` 上 */
+#composer {
+  display: block;
+}
+
+/* 那张悬浮的卡片：它是输入框的视觉边界，所以里面那个 textarea 不再自己画边框 */
+#composer > .inner {
+  pointer-events: auto;
+  max-width: 960px;
+  margin: 0 auto;
+  /*
+   * ⚠️ **列方向**：第一行是"输入框 + 发送按钮"，第二行是权限模式。
+   * 原来是纯横排，加了权限行之后必须改成两行 —— 权限是常用项，放在卡片内部底部。
+   */
+  display: flex;
+  flex-direction: column;
+  padding: 8px 8px 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 8%);
+  transition: border-color 0.15s ease;
+}
+
+/* 第一行：输入框与发送按钮 */
+#composer > .inner > .row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* 权限模式那一行：只放一个下拉框 —— 这一行要留着以后加别的东西 */
+.mode-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+
+/* （这一行放两个会话级设置：权限模式 + 模型。规则见上面那条 `.mode-row` —— 
+   我先在这里另写了一份，和原来的重复了，已经去掉。） */
+
+/*
+ * 用原生 `<select>`：下拉、键盘可用、平台的弹出行为都对 —— 自己画一个弹层
+ * 要处理点击外部、方向键、失焦，收益只是好看一点，不值。
+ *
+ * 说明放在 `title` 里（见 App.tsx），不常显。
+ */
+.mode-select {
+  flex: none;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.mode-select:hover {
+  border-color: var(--dim);
+}
+
+/*
+ * 输入框外面的指标行：上下文 / 速度 / 缓存命中。
+ * 它是**读**的东西，不参与输入，所以留在卡片外 —— 但紧贴着，一眼能看到。
+ */
+.metrics {
+  max-width: 960px;
+  margin: 6px auto 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+}
+
+.metrics .sep {
+  opacity: 0.5;
+}
+
+/* 焦点环挪到卡片上 —— 因为 textarea 的边框已经去掉了 */
+#composer > .inner:focus-within {
+  border-color: var(--dim);
+}
+
+/*
+ * "已发出 N 秒，引擎还没有任何输出"。
+ *
+ * 平时**不存在** —— 正常路径（API 或本地只要在出字）什么都不显示。
+ * 它只在"运行中且久无增量"时出现，而那种状态最容易被误判成软件坏了。
+ * 宽度与卡片对齐，免得这行字比它下面的输入框宽。
+ */
+.stall {
+  max-width: 960px;
+  margin: 0 auto 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.6;
+  pointer-events: auto;
+}
+
+/*
+ * 输入框。
+ *
+ * ⚠️ 滚动条只在**长到上限、再也长不动**时才该出现。三件事一起保证这一点：
+ *
+ *   · `min-height` 必须**不小于一行的实际高度**（字体 15px × 行高 1.65 + 上下内边距
+ *     10px ≈ 45px）。原来写 44px，比一行还矮 1px —— 于是刚聚焦、一个字都没打时
+ *     内容就已经溢出，浏览器立刻画出一条滚动条。这就是"选中就有滚动条"。
+ *   · `overflow-x: hidden` + `overflow-wrap: anywhere`：长串（URL、代码）换行而不是
+ *     再挤出一条横向滚动条 —— **只留一条**。
+ *   · `overflow-y: auto`：只有在真的溢出时才出现，配合 JS 那边"高度取 CSS 上限"
+ *     之后，不到上限就不会溢出、也就不会出现。
+ */
+#input {
+  flex: 1;
+  resize: none;
+  min-height: 45px;
+  /*
+   * 最大高度。JS 会读这个计算值来夹，所以**改这里就够了**，不用动 JS。
+   * 40vh 在 1080p 上约 430px（三分之一屏），太高了；26vh 约 280px、十一二行。
+   */
+  max-height: 26vh;
+  /*
+   * ⚠️ **`overflow-y` 由 JS 开关，不是靠高度算出来的。**
+   *
+   * "高度设成 scrollHeight 就不会溢出"这条路不可靠：`scrollHeight` 是取整的，
+   * 而行高是 `1.65 × 15px = 24.75px` 这种小数，两边差一点点浏览器就会画出一条
+   * 滚动条 —— 表现就是"没到最大高度也出现一次滚动条"。
+   *
+   * 所以这里默认藏起来，`grow()` 里只在**真的被夹到上限**时才切成 `auto`。
+   */
+  overflow-y: hidden;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  /*
+   * 边框交给外面那张卡片（见 `#composer > .inner`）—— 两层边框叠在一起会显得脏，
+   * 而且焦点环也没法统一。
+   */
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+  padding: 8px 4px;
+}
+
+button {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/*
+ * 发送/停止：同一个圆形按钮，只是图标不同。
+ *
+ * 用 `background: var(--fg)` + `color: var(--bg)`：浅色主题下是深底白箭头，
+ * 深色主题下自动反过来，不需要额外写一套。
+ * `flex: none` 是必须的 —— 否则自动增高的 textarea 会把它挤扁。
+ */
+#composer button.send {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--fg);
+  color: var(--bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s ease;
+}
+
+#composer button.send:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+#composer button.send:disabled {
+  opacity: 0.3;
+}
+
+/* ── Markdown 正文 ────────────────────────────────────────────────────────
+   只给块级元素必要的间距，不做花哨排版：这是对话，不是文档站。 */
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 0 0 10px;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 18px 0 8px;
+  line-height: 1.3;
+}
+
+.md h1 {
+  font-size: 1.5em;
+}
+
+.md h2 {
+  font-size: 1.3em;
+}
+
+.md h3 {
+  font-size: 1.12em;
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 10px;
+  padding-left: 1.4em;
+}
+
+.md li {
+  margin: 2px 0;
+}
+
+.md blockquote {
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 3px solid var(--line);
+  color: var(--dim);
+}
+
+.md code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--user);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+.md pre {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: var(--user);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.md pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.88em;
+  line-height: 1.5;
+}
+
+.md a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 16px 0;
+}
+
+.md table {
+  border-collapse: collapse;
+  margin: 0 0 12px;
+  display: block;
+  overflow-x: auto;
+}
+
+.md th,
+.md td {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.md img {
+  max-width: 100%;
+}
+
+/* 代码块底色由我们自己定（`pre` 那一层），别让主题再盖一层 */
+.md .hljs {
+  background: transparent;
+  padding: 0;
+}
+
+/*
+ * github 主题只有浅色一套，深色要自己覆写。
+ * 只覆写常用的几类 token —— 配色抄的是 github-dark，够用且不长。
+ */
+@media (prefers-color-scheme: dark) {
+  .md .hljs {
+    color: #c9d1d9;
+  }
+
+  .md .hljs-comment,
+  .md .hljs-quote {
+    color: #8b949e;
+  }
+
+  .md .hljs-keyword,
+  .md .hljs-selector-tag,
+  .md .hljs-literal,
+  .md .hljs-type,
+  .md .hljs-doctag {
+    color: #ff7b72;
+  }
+
+  .md .hljs-string,
+  .md .hljs-attr,
+  .md .hljs-addition,
+  .md .hljs-regexp {
+    color: #a5d6ff;
+  }
+
+  .md .hljs-number,
+  .md .hljs-variable,
+  .md .hljs-template-variable,
+  .md .hljs-meta {
+    color: #79c0ff;
+  }
+
+  .md .hljs-title,
+  .md .hljs-section,
+  .md .hljs-name,
+  .md .hljs-selector-id,
+  .md .hljs-selector-class {
+    color: #d2a8ff;
+  }
+
+  .md .hljs-built_in,
+  .md .hljs-symbol,
+  .md .hljs-bullet {
+    color: #ffa657;
+  }
+
+  .md .hljs-deletion {
+    color: #ffa198;
+  }
+}
+
+/* 图片占位：点一下才真正加载（不放行 `src` 就不会有对外请求） */
+.md-img {
+  display: inline-block;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 13px;
+  text-align: left;
+  word-break: break-all;
+}
+
+.md-img:hover {
+  border-color: var(--dim);
+  color: var(--fg);
+}
+
+.md img {
+  border-radius: 8px;
+}
+
+/* 长公式横向滚动，不要把版面撑破 */
+.md .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
+/*
+ * 公式语法错时的样子：**原样显示并标出来**。
+ * 宁可让用户看到一段红色源码，也不要因为一个公式把整条消息吞掉。
+ */
+.md .math-error {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--err);
+  border-radius: 6px;
+  color: var(--err);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+  white-space: pre;
+}

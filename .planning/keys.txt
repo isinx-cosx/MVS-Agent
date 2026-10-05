@@ -1,0 +1,58 @@
+﻿session
+   信封键: ["type","version","id","createdAt","cwd","parentSession","isSeeded","origin","delegationDepth","agentPreset"]
+   data 键: "undefined"
+subagent/descriptor
+   信封键: ["type","seq","time","data"]
+   data 键: ["version","mode","provider","label","agentProvider","agentModel","agentReasoningEffort"]
+sandbox/mode
+   信封键: ["type","seq","time","data"]
+   data 键: ["mode","source"]
+approval/policy
+   信封键: ["type","seq","time","data"]
+   data 键: ["policy","source"]
+permission/preset
+   信封键: ["type","seq","time","data"]
+   data 键: ["preset"]
+agent/inbox/spliced
+   信封键: ["type","seq","time","data"]
+   data 键: ["target","start","inserted"]
+turn/start
+   信封键: ["type","seq","time","data"]
+   data 键: ["turn"]
+step/start
+   信封键: ["type","seq","time","data"]
+   data 键: ["turn","step"]
+system/message
+   信封键: ["type","seq","time","data","surfaceOp"]
+   data 键: ["turn","step","message"]
+user/message
+   信封键: ["type","seq","time","data","surfaceOp"]
+   data 键: ["content","source","role","id"]
+   content 块: [["type","text"],["type","text"]]
+request/header
+   信封键: ["type","seq","time","data"]
+   data 键: ["header","reason"]
+request/context
+   信封键: ["type","seq","time","data"]
+   data 键: ["provider","model","contextWindow"]
+session/title
+   信封键: ["type","seq","time","data"]
+   data 键: ["title","messageSeqs","source"]
+session-log-deepseek/delivery-accepted
+   信封键: ["type","seq","time","data"]
+   data 键: ["sessionId","sessionFormatVersion","throughSeq"]
+assistant/message
+   信封键: ["type","seq","time","data","surfaceOp"]
+   data 键: ["turn","step","message","usage","stream"]
+   message 键: ["role","content","source","id"]
+   content 块: [{"keys":["type","text"],"type":"reasoning"},{"keys":["type","text"],"type":"text"},{"keys":["type","id","name","arguments"],"type":"tool-call"},{"keys":["type","id","name","arguments"],"type":"tool-call"}]
+   stream 条数: 15; stream[0] 键: ["type","time","chunk"]
+tool/call
+   信封键: ["type","seq","time","data"]
+   data 键: ["turn","step","callId","name","arguments"]
+tool/result
+   信封键: ["type","seq","time","data","sourceEventSeqs","surfaceOp"]
+   data 键: ["turn","step","message"]
+step/end
+   信封键: ["type","seq","time","data"]
+   data 键: ["turn","step"]

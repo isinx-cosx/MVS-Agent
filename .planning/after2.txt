@@ -1,0 +1,121 @@
+﻿{
+  "主区域_前": [
+    "MVS Agent",
+    "新会话",
+    "Ctrl",
+    "+",
+    "Alt",
+    "+",
+    "N",
+    "插件",
+    "自动化任务",
+    "工作区",
+    "MVS Agent",
+    "未分组",
+    "新会话",
+    "设置",
+    "让知识动手",
+    "有边界",
+    "选择工作区",
+    "选择一个工作区开始",
+    "请选择模型"
+  ],
+  "主区域_后": [
+    "MVS Agent",
+    "新会话",
+    "Ctrl",
+    "+",
+    "Alt",
+    "+",
+    "N",
+    "插件",
+    "自动化任务",
+    "工作区",
+    "MVS Agent",
+    "未分组",
+    "新会话",
+    "设置",
+    "让知识动手",
+    "有边界",
+    "选择工作区",
+    "选择一个工作区开始",
+    "请选择模型"
+  ],
+  "还显示选择工作区开始": true,
+  "会话流": [
+    {
+      "at": 1791022868120,
+      "streamId": "1ed55a2d-dab3-4c27-93d0-f4cbe8031fbb",
+      "endpoint": "session/follow",
+      "payload": {
+        "args": {
+          "request": {
+            "address": {
+              "kind": "session",
+              "sessionId": "5ce4d5a4-3c40-4871-9124-ba0c74beb462"
+            },
+            "assistantStream": true,
+            "maxMessages": 500,
+            "turnWindow": {
+              "minMessages": 50,
+              "minTurns": 2
+            }
+          }
+        }
+      },
+      "known": true
+    },
+    {
+      "at": 1791022873067,
+      "streamId": "837d66b1-a98b-466e-936d-820e200a444d",
+      "endpoint": "session/follow",
+      "payload": {
+        "args": {
+          "request": {
+            "address": {
+              "kind": "session",
+              "sessionId": "f8526727-2631-4e11-849e-e5115076d31a"
+            },
+            "assistantStream": true,
+            "maxMessages": 500,
+            "turnWindow": {
+              "minMessages": 50,
+              "minTurns": 2
+            }
+          }
+        }
+      },
+      "known": true
+    }
+  ],
+  "跟随日志": [
+    {
+      "sessionId": "5ce4d5a4-3c40-4871-9124-ba0c74beb462",
+      "messages": 1,
+      "records": 0,
+      "cursor": -1,
+      "尾seq对得上cursor": true,
+      "事件类型": {},
+      "_seqs": 0
+    },
+    {
+      "sessionId": "f8526727-2631-4e11-849e-e5115076d31a",
+      "messages": 1,
+      "records": 0,
+      "cursor": -1,
+      "尾seq对得上cursor": true,
+      "事件类型": {},
+      "_seqs": 0
+    }
+  ],
+  "RPC": [
+    "session/create:ok",
+    "agentPresets/list:未实现",
+    "commands/list:未实现",
+    "skills/list:未实现",
+    "session/create:ok",
+    "agentPresets/list:未实现",
+    "commands/list:未实现",
+    "skills/list:未实现"
+  ]
+}

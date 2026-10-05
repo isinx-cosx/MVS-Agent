@@ -1,0 +1,7 @@
+﻿[{"endpoint":"workspace/follow","known":true},{"endpoint":"speech/follow","known":false},{"endpoint":"$events","known":true},{"endpoint":"session/control","known":false},{"endpoint":"session/follow","known":true}]
+
+  上面每一行是一条流。`known: false` = **垫片不认识它**，
+  那条流不会有任何帧，依赖它的界面会表现为「点了没反应」。
+
+  · speech/follow  —— 已知缺口：语音输入 —— 守护进程不提供，前端那条路会自己退化成不可用
+  · session/control  —— 已知缺口：运行中会话的控制通道 —— 尚未接

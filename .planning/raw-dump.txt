@@ -1,0 +1,3 @@
+﻿原始长度 301 换行数 1
+{"type":"session","version":4,"id":"35d06f25-9827-4192-9dd7-33dd1c17ef06","createdAt":1791022449434,"cwd":"C:\\Users\\fsafsafsa\\Desktop\\MVS知识库\\MVS Agent","parentSession":"session-850e882b-79a7-4437-9799-17d5470e18a1","isSeeded":false,"origin":"subagent","delegationDepth":1,"agentPreset":"cordis"}
+

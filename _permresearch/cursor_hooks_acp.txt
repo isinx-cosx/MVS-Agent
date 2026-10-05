@@ -1,0 +1,248 @@
+ 
+
+Cursor Hooks Reference — Run Modes, the Classifier, and failClosed 
+
+Skip to content 
+ 
+ Agentic Control Plane 
+
+Docs 
+ Pricing 
+ Blog 
+ Sign in 
+ Get started 
+
+Cursor Hooks Reference — Run Modes, the Classifier, and failClosed
+
+David Crowe 
+ · 
+ September 3, 2026 
+ 
+ · 
+ Updated September 3, 2026 
+ 
+ · 
+ 
+ 11 min read 
+
+cursor 
+ 
+ hooks 
+ 
+ permissions 
+ 
+ reference 
+
+Share 
+ X 
+ HN 
+ LinkedIn 
+ {this.textContent='Copied';setTimeout(()=>this.textContent='Copy link',1500)})" style="color:var(--color-text-primary);background:none;border:1px solid var(--color-border);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;font-family:inherit;">Copy link 
+
+Just want the answer? A Cursor hook is a command registered in hooks.json that runs before or after an agent action. beforeShellExecution and beforeMCPExecution can return permission: "deny" to block the call; a crashed hook fails open unless it sets failClosed: true . One entry in ~/.cursor/hooks.json :
+
+ {
+ "version": 1,
+ "hooks": {
+ "preToolUse": [ { "command": "node ~/.acp/govern.mjs" } ],
+ "postToolUse": [ { "command": "node ~/.acp/govern.mjs" } ]
+ }
+} 
+
+ Install the ACP hook in one command →  ·  Cursor's full control model →  ·  free up to 5 agents
+
+Cursor’s permission story is the one that’s changed the most this year — yolo mode became Auto-Run became Run Modes, two modes were deleted in May, and an LLM classifier became the recommended default a week later. Hooks held still through all of it: a rich event set, a documented input/output contract, and deterministic once a hook actually runs. This is the reference for what’s in hooks.json , what each event receives and returns, and the one default worth knowing before you rely on it.
+
+Where hooks live
+
+hooks.json is read at four layers, highest wins on conflict, all matching hooks run:
+
+Scope 
+ Location 
+
+Enterprise (MDM)
+
+ /Library/Application Support/Cursor/hooks.json (macOS), /etc/cursor/hooks.json (Linux/WSL), C:\ProgramData\Cursor\hooks.json (Windows)
+
+Team
+
+ Web dashboard, Enterprise only, synced roughly every 30 minutes
+
+Project
+
+ <project-root>/.cursor/hooks.json , requires a trusted workspace
+
+User
+
+ ~/.cursor/hooks.json — where the ACP installer writes
+
+Top-level shape: a version number (default 1 ) and a hooks object mapping event names to arrays of definitions. Each definition takes command (required), type ( "command" by default, or "prompt" ), timeout in seconds, matcher , and failClosed . Project hooks run from the project root; user hooks run from ~/.cursor/ .
+
+The events
+
+Cursor’s docs list a longer event set than most harnesses ship. The agent-facing ones, in loop order:
+
+sessionStart , sessionEnd , preToolUse , postToolUse , postToolUseFailure , subagentStart , subagentStop , beforeShellExecution , afterShellExecution , beforeMCPExecution , afterMCPExecution , beforeReadFile , afterFileEdit , beforeSubmitPrompt , preCompact , stop , afterAgentResponse , afterAgentThought .
+
+Two more live outside the agent loop: beforeTabFileRead and afterTabFileEdit apply to inline Tab completions specifically, not Cmd+K or Agent Chat; workspaceOpen fires when a workspace opens or its folders change, with no session, conversation, or model fields in its payload at all.
+
+For control, the shell and MCP pair matter most: beforeShellExecution and beforeMCPExecution are the hooks that can actually stop a call before it runs, with a full permission: allow | deny | ask contract. preToolUse fires for every tool and can rewrite input via updated_input , but its ask value is accepted by the schema and not enforced — treat it as observe-and-rewrite, not observe-and-hold.
+
+The contracts that hold
+
+beforeShellExecution — in: command , cwd , sandbox . Out: permission ( allow / deny / ask ), user_message , agent_message .
+
+beforeMCPExecution — in: tool_name , tool_input (a JSON string), mcp_server_name , plus url / mcp_server_url for HTTP/SSE servers or command for stdio ones. Out: the same permission shape. The docs advise treating a missing or unexpected mcp_server_name as a deny.
+
+preToolUse — in: tool_name , tool_input , tool_use_id , cwd , agent_message . Out: permission ( allow / deny ; ask accepted, not enforced), user_message , agent_message , updated_input .
+
+postToolUse — in: tool_name , tool_input , tool_output (JSON-stringified), tool_use_id , cwd , duration . Out: updated_mcp_tool_output (MCP calls only), additional_context .
+
+beforeReadFile — in: file_path , content , attachments . Out: permission ( allow / deny ). Fail-open by default, same as the rest, unless the hook sets failClosed: true .
+
+Exit codes. 0 with JSON on stdout is the normal path. 2 blocks the same way a permission: "deny" would. Any other exit code is treated as no decision — fail-open.
+
+Matchers
+
+A matcher filters when a hook fires, and the field it matches against depends on the event: preToolUse / postToolUse / postToolUseFailure match a tool type — Shell , Read , Write , Grep , Delete , Task , or MCP:<tool_name> ; beforeShellExecution / afterShellExecution match the full command string; subagentStart / subagentStop match the subagent type. No matcher means the hook sees every call for that event.
+
+Common input, and the prompt hook type
+
+Every hook payload ( workspaceOpen excepted) carries conversation_id , generation_id , model , model_id , hook_event_name , cursor_version , workspace_roots , user_email , transcript_path . A sessionStart hook can return an env object that propagates to later hooks in the session.
+
+Cursor also ships a second hook type beyond command : type: "prompt" runs a fast LLM against a natural-language condition and returns { ok: boolean, reason } , with $ARGUMENTS substituted for the hook’s input JSON. That’s a distinct mechanism from the Run Modes classifier below — a prompt hook is one entry you write and register yourself; the classifier is a permission-layer default that evaluates every unmatched call.
+
+failClosed : the default worth designing around
+
+Every event above shares one behavior: failClosed defaults to false . A crashed hook, a timeout, or invalid JSON on stdout doesn’t hold the call — it lets it through, same as if no hook were registered at all. If a hook is your enforcement — a deny rule, a policy check, an approval gate — that default means an outage in the hook’s own dependencies silently turns it off. Cursor’s docs recommend setting failClosed: true on security-critical beforeMCPExecution hooks, and it’s also documented on beforeReadFile — nothing forces you to set it on the rest.
+
+This is the same shape of question every hook-based control answers differently. Claude Code’s PreToolUse hooks treat a timeout as no decision too, letting the call run under bypassPermissions . Cursor’s difference is that the fail-open default is explicit and per-hook, not implicit and mode-wide — a setting you choose, not a mode you’re stuck in.
+
+Run Modes and the classifier
+
+Hooks are one layer of Cursor’s control stack; the permission posture around them is a Run Mode , and it’s worth knowing what a hook’s ask is competing against:
+
+Auto-review (recommended default). Allowlisted calls run. Other shell commands run sandboxed where possible. Whatever’s left goes to an LLM classifier — a small, Cursor-managed model — that returns allow, try-something-different, or ask. It covers shell, MCP, and fetch.
+
+ Allowlist. Listed actions run; everything else prompts. No classifier, sandbox optional.
+
+ Run Everything. Everything auto-runs — no sandbox, no classifier, no prompts.
+
+The classifier is a judgment call, not a rule — Cursor’s own docs say the allowlist beneath it is “best-effort, not a security boundary.” A beforeShellExecution or beforeMCPExecution hook that returns deny sits upstream of all three modes and holds regardless of which one is active; a preToolUse ask does not, since it isn’t enforced.
+
+What the ACP hook does with the same contract
+
+The ACP integration for Cursor installs the same govern.mjs script Claude Code and Codex use, registered under both preToolUse and postToolUse in ~/.cursor/hooks.json . preToolUse POSTs to /govern/tool-use and returns permissionDecision: "deny" to block; postToolUse POSTs to /govern/tool-output and writes the audit-log entry, surfacing PII and secret findings. The installer detects Cursor by ~/.cursor existing or cursor on PATH, is idempotent, and is safe to re-run.
+
+Two honest limits: Cursor’s hook API is newer and less stable than Claude Code’s, so field names have moved and may move again; and postToolUse output mutation is observe-only today — ACP can flag findings into the audit log but can’t rewrite tool output before Cursor sees it.
+
+No --dangerously-skip-permissions — but YOLO mode exists
+
+Cursor has no equivalent flag to Claude Code’s bypass mode. YOLO mode (Run Everything, functionally) can auto-run tools without prompting, but hooks still fire under it — a beforeShellExecution deny holds in Run Everything the same as it does in Auto-review. Antigravity’s comparable flag removes the interception surface entirely ; Cursor’s doesn’t.
+
+Known limitations
+
+preToolUse ’s ask isn’t enforced. If a hook needs to hold a call for human review, use beforeShellExecution or beforeMCPExecution , both of which honor ask fully.
+
+ failClosed is opt-in, per hook. A crashed hook fails open by default; a hook you’re relying on for enforcement needs the flag set explicitly.
+
+ The allowlist beneath the classifier is best-effort. Cursor’s own docs name three published CVEs of allowlist bypass. A hook’s deny is deterministic where the classifier’s verdict is judgment.
+
+ Cloud agents only read project hooks. .cursor/hooks.json at the repo root applies; ~/.cursor/hooks.json does not reach a cloud agent run.
+
+Comparing to Claude Code and Antigravity hooks
+
+Claude Code’s PreToolUse contract is the closest sibling — same exit-code-2-or-JSON shape, same matcher idea — but Claude Code’s hooks fire in every permission mode including its bypass flag, where Cursor has none. The Claude Code hooks reference has that contract in full; the Antigravity hooks reference covers the fail-closed core and the native force_ask decision, which neither Claude Code nor Cursor has.
+
+Frequently asked questions
+
+What hook events does Cursor support? 
+ A wide agent set — sessionStart, sessionEnd, preToolUse, postToolUse, postToolUseFailure, subagentStart, subagentStop, beforeShellExecution, afterShellExecution, beforeMCPExecution, afterMCPExecution, beforeReadFile, afterFileEdit, beforeSubmitPrompt, preCompact, stop, afterAgentResponse, afterAgentThought — plus Tab-specific hooks (beforeTabFileRead, afterTabFileEdit) and an app-lifecycle workspaceOpen hook that fires independent of any agent session.
+
+Does failClosed default to true or false in Cursor? 
+ False. A crashed, timed-out, or invalid-JSON hook fails open — the action it would have gated proceeds — unless that hook sets failClosed: true. Cursor’s own docs recommend true for security-critical beforeMCPExecution hooks; it’s also supported on beforeReadFile.
+
+What are Cursor's three Run Modes? 
+ Auto-review (the recommended default) runs allowlisted calls, sandboxes other shell commands where possible, and sends whatever’s left to an LLM classifier that returns allow, try-something-different, or ask. Allowlist runs listed actions and prompts for the rest, with no classifier. Run Everything auto-runs everything — no sandbox, no classifier, no prompts.
+
+Can a Cursor hook block an MCP tool call? 
+ Yes, with beforeMCPExecution — it receives the MCP server name and tool input and can return permission: deny. The generic preToolUse hook also sees MCP calls (matcher MCP: ) but its ask value is accepted by the schema and not enforced, so beforeMCPExecution is the hook that actually holds for MCP. 
+
+Where to read more
+
+Cursor hooks docs — the upstream reference this page checks against
+
+ Cursor’s full control model, explained — Run Modes, the sandbox, the allowlist CVEs, and where the model ends
+
+ Cursor permissions.json reference — terminalAllowlist , mcpAllowlist , autoRun with allow_instructions / block_instructions , examples, precedence
+
+ Install ACP for Cursor — the hook, what it writes, and its documented limits
+
+ Cursor cost tracking reference — the other plane: what hooks can’t see
+
+ Claude Code hooks reference — the closest sibling contract
+
+ Codex CLI hooks reference — a narrower, shell-first hook surface
+
+Share 
+ X 
+ HN 
+ LinkedIn 
+ {this.textContent='Copied';setTimeout(()=>this.textContent='Copy link',1500)})" style="color:var(--color-text-primary);background:none;border:1px solid var(--color-border);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;font-family:inherit;">Copy link 
+
+Get the next data drop
+
+ What agents actually cost, new tool-surface captures, and the occasional incident post-mortem — sent when we publish something worth your inbox, not on a schedule. Unsubscribe anytime.
+
+Subscribe
+
+Share: 
+ Twitter 
+ LinkedIn 
+
+Related posts
+
+opencode Permissions Reference: allow, ask, deny, and auto-approve 
+
+Antigravity (agy) Permissions Reference — allow, ask, deny, the Presets, and What a Hook Adds 
+
+Prime Agent Cost Tracking — Registering a Provider for the Proxy 
+
+← back to blog 
+
+A
+AGENTIC CONTROL PLANE
+
+ Permissions, approvals, and cost for the coding agents and harnesses you run.
+
+Occasional data drops — new tool-surface captures and cost benchmarks, when we publish them. No schedule, unsubscribe anytime. 
+
+Subscribe 
+
+Product
+
+ Install 
+ Docs 
+ Integrations 
+ Pricing 
+ Library 
+
+Proof
+
+ Caught in the wild 
+ The numbers 
+ Benchmark 
+ GitHub 
+
+Company
+
+ About 
+ Blog 
+ Status 
+ Contact 
+ Trust & Security 
+ Privacy 
+ Terms 
+
+© 2026 Agentic Control Plane 
+

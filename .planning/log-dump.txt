@@ -1,0 +1,10 @@
+﻿node : 解压后 301 字节 / 1 行
+所在位置 行:3 字符: 1
++ node .planning/dsh-log.mjs $f user/message assistant/message tool/res ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (解压后 301 字节 / 1 行:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+===== 事件类型统计 =====
+     1  session

@@ -1,0 +1,107 @@
+﻿node : 解压后 589816 字节 / 180 行
+所在位置 行:4 字符: 1
++ node .planning/dsh-log.mjs $f turn/end session/title step/start --lim ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (解压后 589816 字节 / 180 行:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+===== step/start (seq=6) =====
+{
+  "type": "step/start",
+  "seq": 6,
+  "time": 1790937438265,
+  "data": {
+    "turn": 1,
+    "step": 1
+  }
+}
+
+===== session/title (seq=13) =====
+{
+  "type": "session/title",
+  "seq": 13,
+  "time": 1790937438273,
+  "data": {
+    "title": "帮我清理一下C盘看见",
+    "messageSeqs": [
+      8
+    ],
+    "source": {
+      "kind": "fallback"
+    }
+  }
+}
+
+===== session/title-llm-request (seq=14) =====
+{
+  "type": "session/title-llm-request",
+  "seq": 14,
+  "time": 1790937438273,
+  "data": {
+    "titleProvider": "session-title-first-prompt-llm",
+    "messageSeqs": [
+      8
+    ],
+    "route": {
+      "provider": "deepseek-official",
+      "model": "deepseek-v4-flash"
+    },
+    "system": "Create a concise title for an AI coding-assistant session from the supplied human messages.\nReturn only the title on one line, **in plain text of natural language**, with no quotes, prefix, explanation, Markdown, XML, or terminal control codes. No code is allowed.\nUse the language of the messages.\nAim for about 5 words in non-CJK languages or 10 CJK characters.",
+    "messages": [
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": "Generate the session title from this JSON array of human messages:\n[{\"seq\":8,\"text\":\"帮我清理一下C盘看见\"}]"
+          }
+        ],
+        "source": {
+          "kind": "dsh-session-title-llm"
+        },
+        "role": "user",
+        "id": "30442b5c-b842-46af-b427-356b3e817075"
+      }
+    ],
+    "maxTokens": 64
+  }
+}
+
+===== turn/end (seq=178) =====
+{
+  "type": "turn/end",
+  "seq": 178,
+  "time": 1790955316009,
+  "data": {
+    "turn": 1,
+    "reason": {
+      "kind": "completed"
+    }
+  }
+}
+
+===== 事件类型统计 =====
+    28  tool/call
+    28  tool/result
+    23  session-log-deepseek/delivery-accepted
+    22  step/start
+    22  assistant/message
+    22  step/end
+     6  agent/inbox/spliced
+     6  user/message
+     4  todo/write
+     2  permission/preset
+     2  sandbox/mode
+     2  approval/policy
+     2  session/title
+     1  session
+     1  turn/start
+     1  system/message
+     1  request/header
+     1  request/context
+     1  session/title-llm-request
+     1  approval/asked
+     1  approval/decided
+     1  command/run
+     1  command/done
+     1  turn/end

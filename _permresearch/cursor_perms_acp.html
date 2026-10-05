@@ -1,0 +1,892 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Begin Jekyll SEO tag v2.9.0 -->
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="Cursor Permissions &amp; Control Model — permissions.json Schema, Run Modes, Hooks" />
+<meta name="author" content="David Crowe" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="The permissions.json schema (terminalAllowlist, mcpAllowlist, autoRun with allow_instructions and block_instructions) with JSON examples and precedence, plus Cursor’s three Run Modes, the Auto-review classifier, the sandbox, hooks and failClosed, the allowlist-bypass CVEs, and where the model ends." />
+<meta name="twitter:description" property="og:description" content="The permissions.json schema (terminalAllowlist, mcpAllowlist, autoRun with allow_instructions and block_instructions) with JSON examples and precedence, plus Cursor’s three Run Modes, the Auto-review classifier, the sandbox, hooks and failClosed, the allowlist-bypass CVEs, and where the model ends." />
+<link rel="canonical" href="https://agenticcontrolplane.com/controls/cursor" />
+<meta property="og:url" content="https://agenticcontrolplane.com/controls/cursor" />
+<meta property="og:site_name" content="Agentic Control Plane" />
+<meta property="og:image" content="https://agenticcontrolplane.com/assets/img/og-image.png" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://agenticcontrolplane.com/assets/img/og-image.png" />
+<meta name="twitter:title" content="Cursor Permissions &amp; Control Model — permissions.json Schema, Run Modes, Hooks" />
+<script type="application/ld+json">
+{"image":"https://agenticcontrolplane.com/assets/img/og-image.png","name":null,"author":{"@type":"Person","name":"David Crowe","url":"https://www.linkedin.com/in/mrdavidcrowe"},"headline":"Cursor Permissions & Control Model — permissions.json Schema, Run Modes, Hooks","dateModified":"2026-09-16T00:00:00-07:00","@type":"WebPage","url":"https://agenticcontrolplane.com/controls/cursor","datePublished":null,"sameAs":null,"mainEntityOfPage":null,"publisher":{"@type":"Organization","name":"Agentic Control Plane","logo":{"@type":"ImageObject","url":"https://agenticcontrolplane.com/assets/img/apple-touch-icon.png"}},"description":"The permissions.json schema (terminalAllowlist, mcpAllowlist, autoRun with allow_instructions and block_instructions) with JSON examples and precedence, plus Cursor’s three Run Modes, the Auto-review classifier, the sandbox, hooks and failClosed, the allowlist-bypass CVEs, and where the model ends.","@context":"https://schema.org"}</script>
+<!-- End Jekyll SEO tag -->
+<title>Cursor Permissions &amp; Control Model — permissions.json Schema, Run Modes, Hooks</title>
+    <meta name="robots" content="index, follow">
+
+    <link rel="icon" type="image/svg+xml" href="/assets/img/favicon.svg">
+    <link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Agentic Control Plane",
+      "alternateName": "ACP",
+      "url": "https://agenticcontrolplane.com",
+      "logo": "https://agenticcontrolplane.com/assets/img/apple-touch-icon.png",
+      "description": "See, price, and control every tool call your AI agents make — each action checked against policy before it runs, priced at API rates, and audited, regardless of framework, model, or client.",
+      "contactPoint": [{
+        "@type": "ContactPoint",
+        "contactType": "customer support",
+        "email": "hello@agenticcontrolplane.com",
+        "url": "https://agenticcontrolplane.com/contact"
+      }],
+      "sameAs": [
+        "https://github.com/agentic-control-plane",
+        "https://www.npmjs.com/search?q=%40agenticcontrolplane"
+      ]
+    }
+    </script>
+
+    
+    <link rel="alternate" type="text/markdown" href="/controls/cursor.md">
+    
+    <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://analytics.reducibl.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+    <!-- Cache-bust: bump this date-tag whenever global.css changes (keep all 3 layouts in sync). -->
+    <link rel="stylesheet" href="/assets/css/global.css?v=1790272789">
+    <link rel="stylesheet" href="/assets/css/watchtower-theme.css?v=1790272789">
+
+    <!-- Privacy-friendly analytics by Plausible (self-hosted at analytics.reducibl.com).
+     Layouts already preconnect to the analytics host in <head>. -->
+<script async src="https://analytics.reducibl.com/js/pa-L2V7GkzAsfx2IoSmffZgC.js"></script>
+<script>
+  window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+  plausible.init();
+
+  // Map a data-track label ("Section: Action") to an OUTCOME-based
+  // event name, so the Plausible Goals list reads as intents ("Signup
+  // Click", "Docs Click") instead of one opaque "CTA Click" bucket.
+  // The raw label is always kept as a prop, so any goal can be broken
+  // down to the exact button in Plausible. First match wins; order
+  // matters (most specific outcome first).
+  window.acpCtaEvent = function (label) {
+    var l = String(label || '').toLowerCase();
+    if (/install|copy|one-liner|curl/.test(l))            return 'Install Copy';
+    // "watch" must outrank the sales rule: "Hero: Watch Demo" is the video
+    // lightbox, not a sales conversation.
+    if (/watch|\bvideo\b/.test(l))                         return 'Demo View';
+    if (/github|repo\b|source/.test(l))                    return 'GitHub Click';
+    if (/enterprise|contact|sales|talk to|demo/.test(l))   return 'Contact Sales Click';
+    if (/start|try free|sign ?up|get started|cloud login|open (your )?console|quickstart|scorecard/.test(l))
+                                                           return 'Signup Click';
+    if (/docs|learn|architecture|reference|methodology|scenario|benchmark|comparison|series|guide|read|model\b/.test(l))
+                                                           return 'Docs Click';
+    if (/pricing|\bpro\b|\bteam\b|\bplan\b/.test(l))       return 'Pricing Click';
+    return 'CTA Click';
+  };
+</script>
+
+    <!-- PostHog product analytics — same project as the console + gateway
+     (key is the public phc_ client token; safe to ship in HTML by design).
+     Purpose: give the ACP funnel a marketing-side floor so
+     marketing pageview -> console signup can be joined in one tool.
+     Every event carries product:"acp" + surface:"marketing" via
+     register(), including autocaptured $pageview/$pageleave.
+     Persistence is the posthog-js default (cookie, cross-subdomain) so a
+     future console-side switch from localStorage can join identities
+     across agenticcontrolplane.com subdomains.
+     Host guard mirrors plausible-init: previews and localhost never
+     pollute the stats. -->
+<script>
+  (function () {
+    try {
+      var h = location.hostname;
+      if (h === "localhost" || h === "12*****.1" || h.endsWith(".web.app") || h.endsWith(".firebaseapp.com") || h.endsWith(".run.app")) return;
+      !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once identify set_config reset opt_in_capturing opt_out_capturing".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+      posthog.init("phc_nyix5XW6yaR44HSbhkbstg7dytecPDmhVa8ceKtSBdEr", {
+        api_host: "https://us.i.posthog.com",
+        defaults: "2025-05-24",
+        person_profiles: "identified_only"
+      });
+      posthog.register({ product: "acp", surface: "marketing" });
+    } catch (e) {}
+  })();
+
+  // Safe mirror helper — layouts call this alongside plausible() so CTA
+  // intent events land in both tools without touching Plausible goals.
+  window.acpPh = function (name, props) {
+    try { if (window.posthog) posthog.capture(name, props || {}); } catch (e) {}
+  };
+</script>
+
+    <!-- Windows visitors copy `curl ... | bash`, which cannot run in PowerShell or
+     cmd, and land nowhere. Windows is the site's largest platform (51% of 30d
+     visitors) and 5 of the last 7 Install Copy events came from it, so this
+     appends the PowerShell one-liner directly under any install-command block,
+     for Windows (non-WSL) user agents only.
+
+     install.ps1 does the same device flow as install.sh and is exercised on a
+     real windows-latest runner by .github/workflows/install-sandbox.yml. -->
+<script>
+(function () {
+  try {
+    var ua = navigator.userAgent || '';
+    if (!/Windows NT/.test(ua) || /WSL/i.test(ua)) return;
+
+    var PS_CMD = 'irm https://agenticcontrolplane.com/install.ps1 | iex';
+
+    function buildNote() {
+      var note = document.createElement('div');
+      note.className = 'acp-win-note';
+      note.setAttribute('data-acp-win-note', '1');
+      note.style.cssText = 'margin-top:8px;font-size:12.5px;line-height:1.6;color:var(--fg-3, var(--color-text-secondary, #6b7280));';
+
+      var lead = document.createElement('div');
+      lead.textContent = 'On Windows? That line needs bash. Run this in PowerShell instead:';
+      note.appendChild(lead);
+
+      // Its own copy button: the layout's `.acp-prose pre` pass has already
+      // run by the time this note is injected, so it never sees this block.
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;margin:6px 0 0;flex-wrap:wrap;';
+
+      var cmd = document.createElement('code');
+      cmd.setAttribute('data-track', 'Windows Note: PowerShell Install Copy');
+      cmd.textContent = PS_CMD;
+      cmd.style.cssText = 'background:var(--bg-3, var(--color-surface, #f3f4f6));border:1px solid var(--line-2, var(--color-border, #e5e7eb));border-radius:6px;padding:4px 8px;font-family:var(--mono, ui-monospace, monospace);font-size:12px;color:var(--fg-1, var(--color-text-primary, #111827));cursor:pointer;overflow-wrap:anywhere;';
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.setAttribute('data-track', 'Windows Note: PowerShell Install Copy');
+      btn.textContent = 'Copy';
+      btn.style.cssText = 'background:none;border:1px solid var(--line-2, var(--color-border, #e5e7eb));border-radius:6px;padding:3px 10px;font-size:11.5px;font-family:inherit;color:inherit;cursor:pointer;';
+
+      function copy() {
+        try {
+          navigator.clipboard.writeText(PS_CMD).then(function () {
+            btn.textContent = 'Copied';
+            setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+          });
+        } catch (e) {}
+      }
+      cmd.addEventListener('click', copy);
+      btn.addEventListener('click', copy);
+
+      row.appendChild(cmd);
+      row.appendChild(btn);
+      note.appendChild(row);
+
+      var alt = document.createElement('div');
+      alt.style.cssText = 'margin-top:6px;';
+      alt.textContent = 'Prefer WSL? The bash line above works unchanged inside Ubuntu on WSL.';
+      note.appendChild(alt);
+
+      return note;
+    }
+
+    function annotate() {
+      try {
+        var candidates = document.querySelectorAll('pre, .install-body, code');
+        for (var i = 0; i < candidates.length; i++) {
+          var el = candidates[i];
+          if (el.hasAttribute('data-acp-win-checked')) continue;
+          el.setAttribute('data-acp-win-checked', '1');
+
+          if ((el.textContent || '').indexOf('install.sh | bash') === -1) continue;
+
+          // Blocks that already ship the PowerShell command in the served
+          // HTML (install-commands.html) need no injected note.
+          if (el.closest && el.closest('.acp-has-win-cmd')) continue;
+
+          // A <code> inside a <pre> (or .install-body) we already matched
+          // gets skipped so each command block gets exactly one note.
+          if (el.tagName === 'CODE' && (el.closest('pre') || el.closest('.install-body'))) continue;
+
+          var host = el.parentNode;
+          if (!host) continue;
+          if (el.nextElementSibling && el.nextElementSibling.className === 'acp-win-note') continue;
+
+          var note = buildNote();
+          if (el.nextSibling) {
+            host.insertBefore(note, el.nextSibling);
+          } else {
+            host.appendChild(note);
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', annotate);
+    } else {
+      annotate();
+    }
+  } catch (e) {}
+})();
+</script>
+
+
+
+  </head>
+  <body>
+    <div class="acp-app">
+      <a href="#main-content" class="acp-skip-link">Skip to content</a>
+      <header class="acp-header">
+  <a href="/" class="acp-brand" aria-label="Agentic Control Plane home">Agentic Control Plane</a>
+  <input type="checkbox" id="acp-nav-toggle" class="acp-nav-toggle" aria-hidden="true">
+  <label for="acp-nav-toggle" class="acp-hamburger" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </label>
+  <!-- Simplified 2026-09-21: five items, no dropdowns. The former Learn menu
+       (eleven concept pages) and the Docs submenu are indexed from /library
+       and the docs sidebar respectively. Pre-change: tag site-pre-simplify-2026-09-21. -->
+  <nav aria-label="Main navigation">
+    <a href="/docs" class="acp-btn acp-btn-ghost" data-track="Nav: Docs">Docs</a>
+    <a href="/pricing" class="acp-btn acp-btn-ghost" data-track="Nav: Pricing">Pricing</a>
+    <a href="/blog" class="acp-btn acp-btn-ghost" data-track="Nav: Blog">Blog</a>
+    <a href="https://cloud.agenticcontrolplane.com/login" class="acp-btn acp-btn-ghost" data-track="Nav: Sign In">Sign in</a>
+    <a href="/getting-started" class="acp-btn acp-btn-primary" data-track="Nav: Get Started">Get started</a>
+  </nav>
+</header>
+
+      <main id="main-content">
+        <div class="acp-docs-layout">
+
+  <!-- Left: full documentation tree -->
+  <aside class="acp-docs-sidebar" aria-label="Documentation navigation">
+    <input type="checkbox" id="acp-docs-nav-toggle" class="acp-docs-nav-toggle" aria-hidden="true">
+    <label for="acp-docs-nav-toggle" class="acp-docs-nav-toggle-label">Documentation <span aria-hidden="true">&#9662;</span></label>
+    <div class="acp-docs-nav-wrap">
+      <nav class="acp-docs-nav" aria-label="Documentation"><div class="acp-docs-nav-section">
+    <div class="acp-docs-nav-title">Start here</div><a href="/getting-started" class="acp-docs-nav-link ">Install into your agent</a><a href="/docs/governance-model" class="acp-docs-nav-link ">How a call is decided</a><a href="/docs/policies" class="acp-docs-nav-link ">Rules and scopes</a><a href="/docs/approvals" class="acp-docs-nav-link ">Approvals</a><a href="/docs/setup" class="acp-docs-nav-link ">Every way to set up ACP</a></div><div class="acp-docs-nav-section">
+    <div class="acp-docs-nav-title">Reference</div><a href="/docs/api/" class="acp-docs-nav-link ">API</a><a href="/integrations" class="acp-docs-nav-link ">Integrations</a><a href="/controls" class="acp-docs-nav-link ">Harness controls, compared</a><a href="/mcp-controls" class="acp-docs-nav-link ">MCP server controls, compared</a><a href="/coverage" class="acp-docs-nav-link ">Coverage matrix</a><a href="/reference-architecture" class="acp-docs-nav-link ">Reference architecture</a></div><div class="acp-docs-nav-section">
+    <div class="acp-docs-nav-title">Teams</div><a href="/docs/team-setup" class="acp-docs-nav-link ">Team setup</a><a href="/docs/enterprise" class="acp-docs-nav-link ">Enterprise rollout</a><a href="/guides/soc2-audit-trails" class="acp-docs-nav-link ">SOC 2 audit trails</a><a href="/guides/pii-detection" class="acp-docs-nav-link ">PII detection</a></div></nav>
+
+    </div>
+  </aside>
+
+  <!-- Center: page content -->
+  <div class="acp-prose acp-docs-content">
+    <h1 id="the-cursor-control-model-explained">The Cursor control model, explained</h1>
+
+<p>Cursor’s control surface went through more churn than any other major harness’s in 2026: yolo mode became Auto-Run became Run Modes; two modes were deleted in May; an LLM classifier became the recommended default a week later. The current model is coherent once you see its shape — <strong>an allowlist, a sandbox, and a classifier, stacked</strong> — but a lot of published advice describes versions that no longer exist. This page is the current reference, 3.x era.</p>
+
+<p><em>This page covers Cursor’s own controls. For wiring ACP into Cursor, see the <a href="/integrations/cursor">install guide</a>.</em></p>
+
+<h2 id="the-defaults-before-any-configuration">The defaults, before any configuration</h2>
+
+<p>Worth stating plainly because it surprises people: out of the box, terminal commands need approval — but <strong>workspace file edits don’t</strong>. Edits save to disk immediately; your undo is version control. Reads and searches are free; MCP tool calls prompt individually unless allowlisted; the agent can’t make arbitrary network requests (a few providers are permitted). Three protections always prompt regardless of mode: browser actions, file deletion, and writes outside the workspace. A short list of paths is deny-write under the sandbox — <code class="language-plaintext highlighter-rouge">.git/config</code>, <code class="language-plaintext highlighter-rouge">.git/hooks</code>, <code class="language-plaintext highlighter-rouge">.vscode</code>, <code class="language-plaintext highlighter-rouge">.cursorignore</code> — the harness protecting its own steering files.</p>
+
+<h2 id="run-modes-the-three-layer-stack">Run Modes: the three-layer stack</h2>
+
+<p>Since 3.6 (May 2026), the permission posture is a Run Mode:</p>
+
+<ol>
+  <li><strong>Auto-review</strong> (recommended default). A pipeline: allowlisted calls run; other shell commands run <strong>sandboxed</strong> where possible; whatever’s left goes to an <strong>LLM classifier</strong> (a small Cursor-managed model) that returns allow, try-something-different, or ask-the-human. It covers shell, MCP, and fetch.</li>
+  <li><strong>Allowlist</strong>: listed actions run, everything else prompts. No classifier; sandbox optional.</li>
+  <li><strong>Run Everything</strong>: everything auto-runs — no sandbox, no classifier, no prompts. The escape hatch as a mode.</li>
+</ol>
+
+<p>Two modes were <em>removed</em> in 3.5 — “Ask Every Time” (now: Allowlist with an empty list) and “Run in Sandbox” (folded into Allowlist). Stale advice frequently references both.</p>
+
+<p>The configuration is genuinely novel, for better and worse: <code class="language-plaintext highlighter-rouge">permissions.json</code> (<code class="language-plaintext highlighter-rouge">~/.cursor/</code> and per-project, with a team dashboard layer above both) takes <code class="language-plaintext highlighter-rouge">allow_instructions</code> and <code class="language-plaintext highlighter-rouge">block_instructions</code> as <strong>natural-language sentences</strong>, not command patterns — <a href="#permissions-json">the full schema, with examples, is below</a>. Flexible, readable — and probabilistic at the exact point most systems are deterministic. Cursor’s docs say the quiet part out loud, verbatim: <em>“The allowlist is best-effort, not a security boundary. Determined agents or prompt injection might bypass it.”</em></p>
+
+<p>That candor is earned by history — three published CVEs of allowlist bypass: command substitution (CVE-2025-54131), environment-variable poisoning and shell built-ins (CVE-2026-22708), and web-content prompt injection chained into auto-execution (CVE-2026-31854). All patched; the <em>class</em> is the lesson, and it’s the same lesson <a href="/blog/what-survives-yolo-mode">every string-matching permission system teaches</a>.</p>
+
+<p>One more line to internalize: <code class="language-plaintext highlighter-rouge">.cursor/rules</code> files steer the model’s behavior — they are <strong>not</strong> enforcement. Rules are prompts; Run Modes, permissions.json, sandbox.json, and hooks are the controls.</p>
+
+<h2 id="permissions-json"><code class="language-plaintext highlighter-rouge">permissions.json</code> reference: <code class="language-plaintext highlighter-rouge">autoRun</code>, <code class="language-plaintext highlighter-rouge">allow_instructions</code>, <code class="language-plaintext highlighter-rouge">block_instructions</code></h2>
+
+<p>The file behind Run Modes. Everything here is checked against <a href="https://cursor.com/docs/reference/permissions">Cursor’s own <code class="language-plaintext highlighter-rouge">permissions.json</code> reference</a> and the <a href="https://cursor.com/docs/agent/security/run-modes">Run Modes docs</a> as of 2026-09-16; the file has changed before and will again, so confirm a detail upstream before you rely on it.</p>
+
+<h3 id="where-it-lives">Where it lives</h3>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>~/.cursor/permissions.json              # per-user — applies in every workspace
+&lt;workspace&gt;/.cursor/permissions.json    # per-repo — commit it so the team gets the same rules
+</code></pre></div></div>
+
+<p>Both files are optional. They load at startup and are re-read when they change, JSONC comments are accepted, unrecognized keys are ignored, and non-string entries inside an array are silently dropped. Team admins can set the same lists in the dashboard; when they do, both files are ignored. The Cursor CLI has its own permissions system — this file is the editor’s.</p>
+
+<h3 id="the-schema">The schema</h3>
+
+<p>Three top-level keys, all optional. The top level is camelCase; the two keys inside <code class="language-plaintext highlighter-rouge">autoRun</code> are snake_case.</p>
+
+<div class="acp-post-wide-table">
+
+  <table>
+    <thead>
+      <tr>
+        <th>Key</th>
+        <th>Type</th>
+        <th>What it does</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code class="language-plaintext highlighter-rouge">terminalAllowlist</code></td>
+        <td><code class="language-plaintext highlighter-rouge">string[]</code></td>
+        <td>Terminal commands that run without approval. Prefix match, case-sensitive: <code class="language-plaintext highlighter-rouge">git</code> matches <code class="language-plaintext highlighter-rouge">git status</code> but not <code class="language-plaintext highlighter-rouge">gitk</code>; <code class="language-plaintext highlighter-rouge">git status</code> is narrower; <code class="language-plaintext highlighter-rouge">npm:install*</code> uses the colon to split the command from an args glob.</td>
+      </tr>
+      <tr>
+        <td><code class="language-plaintext highlighter-rouge">mcpAllowlist</code></td>
+        <td><code class="language-plaintext highlighter-rouge">string[]</code></td>
+        <td>MCP tools that run without approval, written <code class="language-plaintext highlighter-rouge">server:tool</code>. Case-insensitive; <code class="language-plaintext highlighter-rouge">*</code> wildcards either half (<code class="language-plaintext highlighter-rouge">github:*</code>, <code class="language-plaintext highlighter-rouge">*:list_issues</code>, <code class="language-plaintext highlighter-rouge">*:*</code>) and globs work inside names (<code class="language-plaintext highlighter-rouge">my-server:list_*</code>). An entry with no colon is skipped.</td>
+      </tr>
+      <tr>
+        <td><code class="language-plaintext highlighter-rouge">autoRun</code></td>
+        <td><code class="language-plaintext highlighter-rouge">object</code></td>
+        <td>Natural-language steering for the Auto-review classifier. Read only in Auto-review mode; no effect in Allowlist or Run Everything.</td>
+      </tr>
+      <tr>
+        <td><code class="language-plaintext highlighter-rouge">autoRun.allow_instructions</code></td>
+        <td><code class="language-plaintext highlighter-rouge">string[]</code></td>
+        <td>Sentences describing call shapes the classifier should lean toward allowing.</td>
+      </tr>
+      <tr>
+        <td><code class="language-plaintext highlighter-rouge">autoRun.block_instructions</code></td>
+        <td><code class="language-plaintext highlighter-rouge">string[]</code></td>
+        <td>Sentences describing call shapes it should lean toward blocking — an approval prompt surfaces, or the agent picks another path.</td>
+      </tr>
+    </tbody>
+  </table>
+
+</div>
+
+<p>The key is <code class="language-plaintext highlighter-rouge">autoRun</code>, not <code class="language-plaintext highlighter-rouge">autorun</code>. A misspelled key isn’t an error; it’s a key that does nothing.</p>
+
+<h3 id="examples">Examples</h3>
+
+<p>Deterministic allowlists — a defined key replaces the matching list in Cursor Settings entirely:</p>
+
+<div class="language-jsonc highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"mcpAllowlist"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+    </span><span class="s2">"github:*"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"linear:*"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"notion:search"</span><span class="w">
+  </span><span class="p">],</span><span class="w">
+  </span><span class="nl">"terminalAllowlist"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+    </span><span class="s2">"git"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"npm"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"cargo build"</span><span class="p">,</span><span class="w">
+    </span><span class="s2">"cargo test"</span><span class="w">
+  </span><span class="p">]</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+
+<p>Steering the Auto-review classifier — each entry is a plain sentence, written the way you’d brief a teammate:</p>
+
+<div class="language-jsonc highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"autoRun"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+    </span><span class="nl">"allow_instructions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+      </span><span class="s2">"Read-only inspections of build artifacts under ./dist are fine."</span><span class="w">
+    </span><span class="p">],</span><span class="w">
+    </span><span class="nl">"block_instructions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+      </span><span class="s2">"Every AWS CLI command should go through approval first."</span><span class="p">,</span><span class="w">
+      </span><span class="s2">"Every command that modifies Kubernetes resources should go through approval first."</span><span class="w">
+    </span><span class="p">]</span><span class="w">
+  </span><span class="p">}</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+
+<p>Per-user plus per-repo — the arrays inside every field concatenate, so a repo layers its own guardrails on top of your defaults:</p>
+
+<div class="language-jsonc highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1">// ~/.cursor/permissions.json</span><span class="w">
+</span><span class="p">{</span><span class="w">
+  </span><span class="nl">"terminalAllowlist"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"git"</span><span class="p">,</span><span class="w"> </span><span class="s2">"npm"</span><span class="p">,</span><span class="w"> </span><span class="s2">"pnpm"</span><span class="p">],</span><span class="w">
+  </span><span class="nl">"autoRun"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+    </span><span class="nl">"block_instructions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"Anything that touches my SSH config or shell rc files."</span><span class="p">]</span><span class="w">
+  </span><span class="p">}</span><span class="w">
+</span><span class="p">}</span><span class="w">
+
+</span><span class="c1">// &lt;workspace&gt;/.cursor/permissions.json</span><span class="w">
+</span><span class="p">{</span><span class="w">
+  </span><span class="nl">"terminalAllowlist"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"cargo build"</span><span class="p">,</span><span class="w"> </span><span class="s2">"cargo test"</span><span class="p">],</span><span class="w">
+  </span><span class="nl">"autoRun"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+    </span><span class="nl">"block_instructions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"Never run database migrations against the production schema in this repo."</span><span class="p">]</span><span class="w">
+  </span><span class="p">}</span><span class="w">
+</span><span class="p">}</span><span class="w">
+
+</span><span class="c1">// effective</span><span class="w">
+</span><span class="p">{</span><span class="w">
+  </span><span class="nl">"terminalAllowlist"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"git"</span><span class="p">,</span><span class="w"> </span><span class="s2">"npm"</span><span class="p">,</span><span class="w"> </span><span class="s2">"pnpm"</span><span class="p">,</span><span class="w"> </span><span class="s2">"cargo build"</span><span class="p">,</span><span class="w"> </span><span class="s2">"cargo test"</span><span class="p">],</span><span class="w">
+  </span><span class="nl">"autoRun"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w">
+    </span><span class="nl">"block_instructions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w">
+      </span><span class="s2">"Anything that touches my SSH config or shell rc files."</span><span class="p">,</span><span class="w">
+      </span><span class="s2">"Never run database migrations against the production schema in this repo."</span><span class="w">
+    </span><span class="p">]</span><span class="w">
+  </span><span class="p">}</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre></div></div>
+
+<h3 id="precedence">Precedence</h3>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>team admin (dashboard)  &gt;  permissions.json (per-user ∪ per-repo)  &gt;  Cursor Settings UI
+</code></pre></div></div>
+
+<ul>
+  <li><strong>Dashboard wins outright.</strong> When a team configuration applies, neither file nor the Settings list can add entries.</li>
+  <li><strong>Between the two files, arrays concatenate</strong> — per-user and per-repo entries combine rather than replace each other.</li>
+  <li><strong>Against Settings, a defined key replaces.</strong> The corresponding section of Cursor Settings turns read-only and the add button disappears.</li>
+  <li><strong>A missing file, an unparseable file, or an absent key falls back to Settings.</strong> A key that is present but resolves to an empty array does not — the effective allowlist is empty.</li>
+  <li><strong>The three areas are independent.</strong> Define only <code class="language-plaintext highlighter-rouge">mcpAllowlist</code> and the terminal list and <code class="language-plaintext highlighter-rouge">autoRun</code> stay under Settings control.</li>
+  <li><strong>A Run Mode has to be on.</strong> Before 3.5, the deprecated Ask Every Time mode ignored allowlists.</li>
+</ul>
+
+<h3 id="what-it-enforces-and-what-it-steers">What it enforces and what it steers</h3>
+
+<p>The two allowlists are deterministic pattern matches. <code class="language-plaintext highlighter-rouge">autoRun</code> is a hint to a model. Cursor’s reference says so directly: a call matching <code class="language-plaintext highlighter-rouge">allow_instructions</code> “still goes through the safety check,” a call matching <code class="language-plaintext highlighter-rouge">block_instructions</code> “can still be approved when Cursor insists,” and the instruction is to “treat both as steering, not enforcement.” The page’s own notes header: “Not a security boundary.”</p>
+
+<p>So <code class="language-plaintext highlighter-rouge">permissions.json</code> is the right place for a convenience and the wrong place for a rule that has to hold. A rule that has to hold goes in the sandbox, a deny, or a <code class="language-plaintext highlighter-rouge">failClosed: true</code> hook on <code class="language-plaintext highlighter-rouge">beforeShellExecution</code> or <code class="language-plaintext highlighter-rouge">beforeMCPExecution</code> — the deterministic seam <a href="#the-hooks">the hooks section</a> and <a href="/blog/cursor-hooks-reference">our Cursor hooks reference</a> cover. That is the line <a href="/what-is-runtime-authorization">runtime authorization</a> draws: a per-call check the caller can’t talk its way past.</p>
+
+<h2 id="the-sandbox">The sandbox</h2>
+
+<p>Real OS-level enforcement: Seatbelt on macOS, Landlock + seccomp on Linux (kernel 6.2+), and on Windows, the Linux sandbox inside WSL2 — no native Windows boundary. Bounds: workspace read/write, network <strong>blocked by default</strong>, <code class="language-plaintext highlighter-rouge">/tmp</code> writable, the steering-file deny-writes above. <code class="language-plaintext highlighter-rouge">sandbox.json</code> (user and project, project wins, admin layer above) extends readable/writable paths and network domains; the default network mode adds the common package registries. Unsandboxable commands — outside-workspace writes, privileged operations, network needs — escalate to the classifier or the human rather than silently running unconfined.</p>
+
+<h2 id="the-hooks">The hooks</h2>
+
+<p>A rich event set, current era: <code class="language-plaintext highlighter-rouge">preToolUse</code>/<code class="language-plaintext highlighter-rouge">postToolUse</code>, <code class="language-plaintext highlighter-rouge">beforeShellExecution</code>/<code class="language-plaintext highlighter-rouge">afterShellExecution</code>, <code class="language-plaintext highlighter-rouge">beforeMCPExecution</code>, <code class="language-plaintext highlighter-rouge">beforeReadFile</code>/<code class="language-plaintext highlighter-rouge">afterFileEdit</code>, subagent and session lifecycle, prompt-submit. Four config layers (enterprise MDM → team cloud → project → user); all matching hooks run, higher layer wins conflicts. Output can return <code class="language-plaintext highlighter-rouge">permission: allow | deny | ask</code> — with a documented asymmetry: <code class="language-plaintext highlighter-rouge">ask</code> is fully honored only for <code class="language-plaintext highlighter-rouge">beforeShellExecution</code> and <code class="language-plaintext highlighter-rouge">beforeMCPExecution</code>; on <code class="language-plaintext highlighter-rouge">preToolUse</code> it’s accepted by the schema but not enforced. Exit code 2 blocks, Claude Code-style — the <a href="/blog/codex-cli-hooks-reference">hook-contract convergence</a> again.</p>
+
+<p>The default worth designing around: <strong><code class="language-plaintext highlighter-rouge">failClosed</code> defaults to false.</strong> A crashed or slow hook fails open unless you say otherwise, per hook. If a hook is your enforcement, set it — and know what you’ve chosen when the hook’s backend is unreachable.</p>
+
+<h2 id="the-record">The record</h2>
+
+<p>Stale-fact flag, because we’ve repeated the older version ourselves: it isn’t that Cursor’s audit log is enterprise-gated — <strong>no native per-tool-call audit log exists on any tier.</strong> The enterprise dashboard is usage and spend analytics. The docs’ own suggested path to an audit trail is building one with hooks. For a harness whose default mode includes a classifier making allow decisions, that means the decisions with the least explanation also have the least record.</p>
+
+<h2 id="cloud-agents-and-the-empty-chair">Cloud agents and the empty chair</h2>
+
+<p>Cursor’s cloud agents (formerly background agents) are the purest empty-chair case in the ecosystem: they <strong>don’t use Run Modes — they auto-run everything</strong>, inside an isolated VM with egress allowlists, delivering a branch and draft PR. That’s a defensible design — blast radius contained by the VM, output contained by review-before-merge — but be clear about what it is: per-action policy and per-action record are both absent; the control is the box and the PR review. The CLI carries the same posture into scripts: <code class="language-plaintext highlighter-rouge">-p</code> (print mode) gets “access to all tools, including write and shell,” and <code class="language-plaintext highlighter-rouge">--force</code> (alias: <code class="language-plaintext highlighter-rouge">--yolo</code>) auto-allows anything not explicitly denied. <a href="/blog/interactive-vs-autonomous-the-empty-chair-test">The empty-chair test</a> is the checklist to run before either.</p>
+
+<h2 id="where-the-native-model-ends">Where the native model ends</h2>
+
+<p>Cursor’s stack — allowlist, then sandbox, then classifier — is a reasonable answer to approval fatigue, and the sandbox work is solid. The structural edges:</p>
+
+<ul>
+  <li><strong>Probabilistic at the boundary.</strong> Natural-language permission instructions and a classifier verdict are judgment, not rules; Cursor says so itself. Anything that must hold needs the sandbox, a deny, or a fail-closed hook.</li>
+  <li><strong>No record at all.</strong> Uniquely among the <a href="/controls">big three</a>, there is no native per-action audit log — the classifier’s allows vanish into the session.</li>
+  <li><strong>Config sprawl.</strong> <a href="#permissions-json">permissions.json</a>, sandbox.json, hooks.json, rules — four files with different semantics (two enforcing, one advisory, one mixed), per user and per project, per machine.</li>
+  <li><strong>The unattended tier skips policy entirely.</strong> Cloud agents trade per-action control for VM walls.</li>
+</ul>
+
+<p>The composition: keep the sandbox and the classifier for what they’re good at — fatigue and containment — and put deterministic policy plus the missing record on the hook seam, <code class="language-plaintext highlighter-rouge">failClosed: true</code>, with <a href="/integrations/cursor">our integration</a> carrying the same workspace rules here as on every other harness, and writing the per-action ledger Cursor doesn’t have.</p>
+
+<h2 id="frequently-asked-questions">Frequently asked questions</h2>
+
+<div class="acp-faq"><details class="acp-faq-item">
+    <summary>What is the schema of Cursor's permissions.json?</summary>
+    <div class="acp-faq-answer"><p>Three optional top-level keys. <code class="language-plaintext highlighter-rouge">terminalAllowlist</code> — a string array of command prefixes that run without approval (<code class="language-plaintext highlighter-rouge">git</code>, <code class="language-plaintext highlighter-rouge">npm:install*</code>). <code class="language-plaintext highlighter-rouge">mcpAllowlist</code> — a string array of <code class="language-plaintext highlighter-rouge">server:tool</code> patterns, <code class="language-plaintext highlighter-rouge">*</code> as a wildcard on either side. <code class="language-plaintext highlighter-rouge">autoRun</code> — an object with <code class="language-plaintext highlighter-rouge">allow_instructions</code> and <code class="language-plaintext highlighter-rouge">block_instructions</code>, each a string array of plain-English sentences that steer the Auto-review classifier. The key is <code class="language-plaintext highlighter-rouge">autoRun</code> (camelCase); the two inside it are snake_case. It lives at <code class="language-plaintext highlighter-rouge">~/.cursor/permissions.json</code> (per user) and <code class="language-plaintext highlighter-rouge">&lt;workspace&gt;/.cursor/permissions.json</code> (per repo); both load and their arrays concatenate. The two allowlists are deterministic pattern matches; <code class="language-plaintext highlighter-rouge">autoRun</code> only applies in Auto-review mode and Cursor’s docs say to treat it as steering, not enforcement.</p>
+</div>
+  </details><details class="acp-faq-item">
+    <summary>How do permissions work in Cursor's agent?</summary>
+    <div class="acp-faq-answer"><p>Through Run Modes (Cursor 3.6+): Auto-review — the recommended default — runs allowlisted calls, sandboxes other shell commands where possible, and sends the rest to an LLM classifier that decides allow, try-different, or ask; Allowlist runs listed actions and prompts for the rest; Run Everything auto-runs with no sandbox, classifier, or prompts. Independent of mode, some protections always prompt: browser actions, file deletion, and writes outside the workspace. Note the defaults: terminal commands need approval, but workspace file edits do not — they save to disk immediately.</p>
+</div>
+  </details><details class="acp-faq-item">
+    <summary>Are Cursor rules (.cursor/rules) a security control?</summary>
+    <div class="acp-faq-answer"><p>No, and Cursor says so: rules steer the prompt, they don’t constrain execution. Enforcement lives in Run Modes, permissions.json, sandbox.json, and hooks. Cursor’s docs are also explicit that the allowlist is best-effort rather than a security boundary — a candor backed by three published CVEs where allowlists were bypassed via command substitution, environment-variable poisoning, and prompt injection chained with allowlist defeat.</p>
+</div>
+  </details><details class="acp-faq-item">
+    <summary>Does Cursor keep an audit log of what the agent did?</summary>
+    <div class="acp-faq-answer"><p>No native per-tool-call audit log exists on any tier. The enterprise dashboard covers usage and spend analytics, not action audit. The documented path to an audit trail is do-it-yourself via hooks — which is precisely the seam a control layer fills.</p>
+</div>
+  </details><details class="acp-faq-item">
+    <summary>What happens to approvals in Cursor's cloud agents?</summary>
+    <div class="acp-faq-answer"><p>Cloud agents don’t use Run Modes at all — they auto-run everything, bounded by VM isolation and network egress allowlists, and deliver output as a branch and draft PR. The empty-chair resolution is auto-approve-inside-a-VM: contained in blast radius, but with no per-action policy and no per-action record.</p>
+</div>
+  </details></div>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [{
+      "@type": "Question",
+      "name": "What is the schema of Cursor's permissions.json?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Three optional top-level keys. `terminalAllowlist` — a string array of command prefixes that run without approval (`git`, `npm:install*`). `mcpAllowlist` — a string array of `server:tool` patterns, `*` as a wildcard on either side. `autoRun` — an object with `allow_instructions` and `block_instructions`, each a string array of plain-English sentences that steer the Auto-review classifier. The key is `autoRun` (camelCase); the two inside it are snake_case. It lives at `~/.cursor/permissions.json` (per user) and `/.cursor/permissions.json` (per repo); both load and their arrays concatenate. The two allowlists are deterministic pattern matches; `autoRun` only applies in Auto-review mode and Cursor's docs say to treat it as steering, not enforcement."
+      }
+    },{
+      "@type": "Question",
+      "name": "How do permissions work in Cursor's agent?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Through Run Modes (Cursor 3.6+): Auto-review — the recommended default — runs allowlisted calls, sandboxes other shell commands where possible, and sends the rest to an LLM classifier that decides allow, try-different, or ask; Allowlist runs listed actions and prompts for the rest; Run Everything auto-runs with no sandbox, classifier, or prompts. Independent of mode, some protections always prompt: browser actions, file deletion, and writes outside the workspace. Note the defaults: terminal commands need approval, but workspace file edits do not — they save to disk immediately."
+      }
+    },{
+      "@type": "Question",
+      "name": "Are Cursor rules (.cursor/rules) a security control?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No, and Cursor says so: rules steer the prompt, they don't constrain execution. Enforcement lives in Run Modes, permissions.json, sandbox.json, and hooks. Cursor's docs are also explicit that the allowlist is best-effort rather than a security boundary — a candor backed by three published CVEs where allowlists were bypassed via command substitution, environment-variable poisoning, and prompt injection chained with allowlist defeat."
+      }
+    },{
+      "@type": "Question",
+      "name": "Does Cursor keep an audit log of what the agent did?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No native per-tool-call audit log exists on any tier. The enterprise dashboard covers usage and spend analytics, not action audit. The documented path to an audit trail is do-it-yourself via hooks — which is precisely the seam a control layer fills."
+      }
+    },{
+      "@type": "Question",
+      "name": "What happens to approvals in Cursor's cloud agents?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Cloud agents don't use Run Modes at all — they auto-run everything, bounded by VM isolation and network egress allowlists, and deliver output as a branch and draft PR. The empty-chair resolution is auto-approve-inside-a-VM: contained in blast radius, but with no per-action policy and no per-action record."
+      }
+    }]
+}
+</script>
+
+
+    
+
+
+
+
+
+
+
+
+<div style="margin:8px 0 28px;padding:20px 22px;border:1px solid var(--line-2);border-radius:12px;background:var(--color-accent-light,#f0effe);">
+  
+  <p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:var(--acp-text);"><strong>Running Cursor?</strong> See and control every tool call it makes &mdash; allow/ask/deny before each call, the reason on every row, one installer:</p>
+  <div class="acp-has-win-cmd" style="margin:0 0 12px;">
+  <div style="font-size:11.5px;letter-spacing:.02em;text-transform:uppercase;color:var(--acp-text-dim);margin:0 0 4px;">macOS &middot; Linux &middot; WSL</div>
+  <pre data-track="PostCTA Cursor: Install Copy" style="margin:0 0 10px;background:var(--color-surface,#faf9ff);border:1px solid var(--line-2);border-radius:8px;padding:12px 14px;overflow-x:auto;"><code>curl -sf https://agenticcontrolplane.com/install.sh | bash</code></pre>
+  <div style="font-size:11.5px;letter-spacing:.02em;text-transform:uppercase;color:var(--acp-text-dim);margin:0 0 4px;">Windows &middot; PowerShell</div>
+  <pre data-track="PostCTA Cursor: PowerShell Install Copy" style="margin:0;background:var(--color-surface,#faf9ff);border:1px solid var(--line-2);border-radius:8px;padding:12px 14px;overflow-x:auto;"><code>irm https://agenticcontrolplane.com/install.ps1 | iex</code></pre>
+</div>
+
+  <p style="margin:0;font-size:13px;color:var(--acp-text-dim);"><a href="/integrations/cursor" data-track="PostCTA Cursor: Docs Click" style="font-weight:600;">Full Cursor guide &rarr;</a> &nbsp;&middot;&nbsp; <a href="https://cloud.agenticcontrolplane.com/login?from=%2Fonboarding&surface=cursor" data-track="PostCTA Cursor: Console Signup">see your first checked call &rarr;</a> &nbsp;&middot;&nbsp; free up to 5 agents</p>
+  
+</div>
+
+
+  </div>
+
+  <!-- Right: on-this-page -->
+  <nav class="acp-docs-toc" aria-label="On this page">
+    <div class="acp-docs-toc-inner" id="docs-toc"></div>
+  </nav>
+
+</div>
+
+<script>
+(function() {
+  var toc = document.getElementById('docs-toc');
+  if (!toc) return;
+
+  var headings = document.querySelectorAll('.acp-prose h2, .acp-prose h3');
+  if (headings.length === 0) return;
+
+  var html = '<div class="acp-docs-toc-title">On this page</div>';
+  headings.forEach(function(h) {
+    if (!h.id) {
+      h.id = h.textContent.trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
+    }
+    var level = h.tagName === 'H3' ? ' acp-docs-toc-h3' : '';
+    html += '<a href="#' + h.id + '" class="acp-docs-toc-link' + level + '">' + h.textContent.trim() + '</a>';
+  });
+  toc.innerHTML = html;
+
+  var links = toc.querySelectorAll('.acp-docs-toc-link');
+  var observer = new IntersectionObserver(function(entries) {
+    entries.forEach(function(entry) {
+      if (entry.isIntersecting) {
+        links.forEach(function(l) { l.classList.remove('active'); });
+        var active = toc.querySelector('a[href="#' + entry.target.id + '"]');
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-80px 0px -70% 0px', threshold: 0 });
+
+  headings.forEach(function(h) { observer.observe(h); });
+})();
+</script>
+
+      </main>
+      <footer class="acp-footer v2-footer">
+  <div class="f-wrap">
+    <div>
+      <div class="f-mark"><div class="logo-mark">A</div>AGENTIC CONTROL PLANE</div>
+      <div class="f-tag">Permissions, approvals, and cost for the coding agents and harnesses you run.</div>
+      <form class="f-newsletter" onsubmit="return acpSubscribe(event)">
+        <label for="acp-newsletter-email" class="f-newsletter-label">Occasional data drops &mdash; new tool-surface captures and cost benchmarks, when we publish them. No schedule, unsubscribe anytime.</label>
+        <div class="f-newsletter-row">
+          <input id="acp-newsletter-email" type="email" required placeholder="you@work.com" autocomplete="email" />
+          <button type="submit" data-track="Footer: Newsletter Subscribe">Subscribe</button>
+        </div>
+        <div class="f-newsletter-status" aria-live="polite"></div>
+      </form>
+    </div>
+    <div class="f-cols">
+      <div class="f-col">
+        <h4>Product</h4>
+        <a href="/getting-started">Install</a>
+        <a href="/docs">Docs</a>
+        <a href="/integrations">Integrations</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/library">Library</a>
+      </div>
+      <div class="f-col">
+        <h4>Proof</h4>
+        <a href="/caught-in-the-wild">Caught in the wild</a>
+        <a href="/data">The numbers</a>
+        <a href="/benchmark">Benchmark</a>
+        <a href="https://github.com/agentic-control-plane" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </div>
+      <div class="f-col">
+        <h4>Company</h4>
+        <a href="/about">About</a>
+        <a href="/blog">Blog</a>
+        <a href="https://stats.uptimerobot.com/1qO1HbmtX7" target="_blank" rel="noopener noreferrer">Status</a>
+        <a href="/contact">Contact</a>
+        <a href="/trust">Trust &amp; Security</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+      </div>
+    </div>
+  </div>
+  <div class="f-bottom">
+    <span>&copy; 2026 Agentic Control Plane</span>
+  </div>
+</footer>
+
+<script>
+function acpSubscribe(e) {
+  e.preventDefault();
+  var form = e.target;
+  var input = form.querySelector('input[type="email"]');
+  var btn = form.querySelector('button');
+  var status = form.querySelector('.f-newsletter-status');
+  var email = (input.value || '').trim();
+  if (!email) return false;
+  btn.disabled = true;
+  var origBtnText = btn.textContent;
+  btn.textContent = 'Sending…';
+  status.textContent = '';
+  status.classList.remove('error');
+  fetch('https://us-central1-trim-glazing-445021-n8.cloudfunctions.net/joinWaitlist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email, source: 'acp-newsletter-footer' })
+  }).then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        form.innerHTML = '<div class="f-newsletter-status">Thanks &mdash; you&rsquo;re on the list.</div>';
+        if (window.plausible) window.plausible('Newsletter Subscribe', { props: { source: 'footer' } });
+      } else {
+        throw new Error(data.error || 'submission failed');
+      }
+    })
+    .catch(function() {
+      btn.disabled = false;
+      btn.textContent = origBtnText;
+      status.textContent = 'Something went wrong. Try again?';
+      status.classList.add('error');
+    });
+  return false;
+}
+</script>
+
+    </div>
+    <script>
+      // Markdown fences cannot carry attributes, so every install command
+      // written as a fence — getting-started's step 1 included — has had a
+      // Copy button that writes to the clipboard and reports NOTHING. Only
+      // hand-written HTML with data-track ever fired Install Copy, and all
+      // of those carry the cloud command, so local copies were not
+      // mislabelled, they were uncounted. Tag the button here from the code
+      // text itself.
+      //
+      // This tracks the CLICK on this website. It has nothing to do with the
+      // installed product: `--local` installs still phone home never, and
+      // nothing here changes install.sh.
+      //
+      // The attribute goes on the BUTTON, not the <pre>. The delegated
+      // handler below matches closest('[data-track]'), so tagging the <pre>
+      // would also fire when someone clicks the command to select it — a
+      // known source of the inflation that makes Install Copy read ~2.5x the
+      // human count.
+      document.querySelectorAll('.acp-prose pre').forEach(function(pre) {
+        var btn = document.createElement('button');
+        btn.className = 'acp-copy-btn';
+        btn.textContent = 'Copy';
+        var code = pre.querySelector('code');
+        var cmd = (code ? code.textContent : pre.textContent) || '';
+        // Only our own installer one-liners, and only when the whole command
+        // is there — not prose that happens to mention install.sh.
+        var cmds = cmd.split('\n').filter(function (line) {
+          return /agenticcontrolplane\.com\/install\.(sh|ps1)/.test(line);
+        });
+        if (cmds.length) {
+          // Classify per LINE, not per block. /install-explained puts the
+          // connected and the --local one-liner in one fence to contrast
+          // them, and the Copy button hands over both — counting that as a
+          // local copy would overstate local demand on the one page that
+          // argues for it hardest.
+          var local = cmds.filter(function (line) { return /--local/.test(line); }).length;
+          var kind = local === cmds.length ? 'Local Install Copy'
+                   : local > 0 ? 'Both Modes Install Copy'
+                   : cmds.every(function (line) { return /install\.ps1/.test(line); })
+                     ? 'PowerShell Install Copy'
+                     : 'Install Copy';
+          btn.setAttribute('data-track', 'Prose: ' + kind);
+        }
+        btn.addEventListener('click', function() {
+          var text = code ? code.textContent : pre.textContent;
+          navigator.clipboard.writeText(text).then(function() {
+            btn.textContent = 'Copied';
+            setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+          });
+        });
+        pre.style.position = 'relative';
+        pre.appendChild(btn);
+      });
+    </script>
+    <script>
+    (function() {
+      // Resolve window.plausible at CALL time. The async script replaces
+      // the queue stub once it loads; a reference captured here kept
+      // pushing onto the stub's queue, which nobody drains — so every
+      // CTA/nav/outbound goal below was silently lost in Plausible
+      // (PostHog, which resolves at call time, kept them).
+      function p() { try { if (window.plausible) window.plausible.apply(null, arguments); } catch (e) {} }
+      var page = location.pathname;
+
+      // 1. CTA click tracking — elements with data-track attribute.
+      // The event NAME is the outcome (Signup/Docs/Install/...) so the
+      // Plausible Goals list is self-explanatory; the raw label rides
+      // along as a prop for per-button breakdown.
+      document.addEventListener('click', function(e) {
+        // A double/triple-click to select the command text is one
+        // intent, not three — count only the first click of a burst.
+        if (e.detail > 1) return;
+        var el = e.target.closest('[data-track]');
+        if (el) {
+          var label = el.getAttribute('data-track');
+          var evt = window.acpCtaEvent(label);
+          var props = { label: label, page: page };
+          if (evt === 'Install Copy') props.os = navigator.platform || 'unknown';
+          p(evt, { props: props });
+          window.acpPh(evt, props);
+        }
+      });
+
+      // 2. Outbound link tracking — any external link
+      document.addEventListener('click', function(e) {
+        var a = e.target.closest('a[href]');
+        if (!a) return;
+        var href = a.getAttribute('href');
+        if (href && href.indexOf('http') === 0 && a.hostname !== location.hostname) {
+          p('Outbound Link', { props: { url: href, page: page } });
+        }
+      });
+
+      // 3. Nav click tracking — header and footer links
+      document.addEventListener('click', function(e) {
+        var nav = e.target.closest('.acp-header a, .acp-footer a');
+        if (nav) {
+          p('Nav Click', { props: { label: nav.textContent.trim(), location: nav.closest('.acp-header') ? 'header' : 'footer', page: page } });
+        }
+      });
+
+      // 4. Scroll depth + section reach live in _layouts/home.html — the
+      //    homepage is the only page that fires them and it uses that
+      //    layout, not this one, so a copy here would never run.
+
+      // 5. Blog engagement — fire "Post Read" after 30s on post pages
+      if (document.querySelector('.acp-prose') && page.match(/\/\d{4}\//)) {
+        var title = document.querySelector('h1');
+        setTimeout(function() {
+          p('Post Read', { props: { title: title ? title.textContent.trim() : page, page: page } });
+        }, 30000);
+      }
+
+      // 6. Code copy tracking
+      document.addEventListener('click', function(e) {
+        if (e.target.closest('.acp-copy-btn')) {
+          p('Code Copy', { props: { page: page } });
+        }
+      });
+
+      // 7. Scorecard CTA tracking — links with ?ref=scorecard
+      document.addEventListener('click', function(e) {
+        var a = e.target.closest('a[href*="ref=scorecard"]');
+        if (!a) return;
+        var href = a.getAttribute('href') || '';
+        var dest = href.indexOf('cloud.agenticcontrolplane.com') > -1 ? 'console'
+                 : href.indexOf('/integrations/') > -1 ? 'integration'
+                 : 'other';
+        p('Scorecard CTA', { props: { destination: dest, source: page } });
+      });
+    })();
+    </script>
+    <script>
+    // Close mobile nav when a link is tapped
+    document.querySelectorAll('.acp-header nav a').forEach(function(a) {
+      a.addEventListener('click', function() {
+        var toggle = document.getElementById('acp-nav-toggle');
+        if (toggle) toggle.checked = false;
+      });
+    });
+    </script>
+    <script>
+    // Waitlist form — inline submission with success feedback
+    document.querySelectorAll('.acp-waitlist-form').forEach(function(form) {
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var input = form.querySelector('input[type="email"]');
+        var email = input.value.trim();
+        if (!email) return;
+
+        var btn = form.querySelector('button');
+        var origText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Sending…';
+
+        var endpoint = 'https://us-central1-trim-glazing-445021-n8.cloudfunctions.net/joinWaitlist';
+
+        fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email, source: 'agenticcontrolplane' })
+        }).then(function(res) {
+          return res.json();
+        }).then(function(data) {
+          if (data.ok) {
+            form.innerHTML = '<div class="acp-waitlist-success">Thanks! You\'re on the list.</div>';
+          } else {
+            throw new Error(data.error || 'Form submission failed');
+          }
+        }).catch(function() {
+          btn.disabled = false;
+          btn.textContent = origText;
+          input.style.borderColor = '#ef4444';
+        });
+
+        // Track with Plausible (no PII — email is never sent to analytics)
+        if (window.plausible) {
+          window.plausible('Waitlist Signup', { props: { page: location.pathname } });
+        }
+      });
+    });
+    </script>
+    <script>
+    // Open external links in new tabs
+    document.querySelectorAll('a[href^="http"]').forEach(function(a) {
+      if (a.hostname !== location.hostname) {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener noreferrer');
+      }
+    });
+    </script>
+  </body>
+</html>

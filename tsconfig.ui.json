@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    /* 导入写成 `./client.ts`（和 Node 那侧的类型剥离约定一致），tsc 需要这个开关 */
+    "allowImportingTsExtensions": true,
+    "types": []
+  },
+  "include": ["ui/**/*.ts", "ui/**/*.tsx"]
+}

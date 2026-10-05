@@ -1,0 +1,9 @@
+: ping
+
+data: {"id":"chatcmpl-4","object":"chat.completion.chunk","created":1730000000,"model":"local-model","choices":[{"index":0,"delta":{"role":"assistant","content":"本地"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-4","object":"chat.completion.chunk","created":1730000000,"model":"local-model","choices":[{"index":0,"delta":{"content":"推理"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-4","object":"chat.completion.chunk","created":1730000000,"model":"local-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]

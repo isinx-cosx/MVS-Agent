@@ -1,0 +1,31 @@
+﻿{
+  "treeitem数": 3,
+  "items": [
+    {
+      "cls": "_7VDZUG_projectRow",
+      "level": null,
+      "expanded": "false",
+      "selected": null,
+      "text": "MVS Agent",
+      "html": "<div class=\"_7VDZUG_projectRow\" data-row-key=\"workspace:C:\\Users\\fsafsafsa\\Desktop\\MVS知识库\\MVS Agent\" role=\"treeitem\" aria-expanded=\"false\" draggable=\"true\"><span class=\"_7VDZUG_slot _7VDZUG_folder\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" stroke-width=\"1\"><path d=\"M1.50439 3.11059C1.50439 2.55831 1.95211 2.1106 2.50439 2.1106"
+    },
+    {
+      "cls": "_7VDZUG_projectRow",
+      "level": null,
+      "expanded": "true",
+      "selected": null,
+      "text": "未分组",
+      "html": "<div class=\"_7VDZUG_projectRow\" data-row-key=\"workspace:\" role=\"treeitem\" aria-expanded=\"true\" draggable=\"false\"><span class=\"_7VDZUG_slot _7VDZUG_folder _7VDZUG_folderActive\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" stroke-width=\"1\"><path d=\"M2.55912 7.93683C2.67584 7.49906 3.0723 7.19446 3.52536 7.19446H13.6491C14.3061 7.19"
+    },
+    {
+      "cls": "_7VDZUG_sessionRow _7VDZUG_selected",
+      "level": null,
+      "expanded": null,
+      "selected": "true",
+      "text": "新会话",
+      "html": "<div data-row-key=\"session:2249dd68-b075-401c-88b8-3be426a6e17d\" class=\"_7VDZUG_sessionRow _7VDZUG_selected\" role=\"treeitem\" aria-selected=\"true\" draggable=\"false\"><span class=\"_7VDZUG_slot\"></span><span class=\"_7VDZUG_title\">新会话</span></div>"
+    }
+  ],
+  "整个侧栏HTML长度": 7698,
+  "侧栏HTML头": "<div class=\"tPVXea_treeBody tPVXea_wide\"><div class=\"tPVXea_list\" role=\"tree\" aria-label=\"会话\"><div class=\"tPVXea_groupSection\" style=\"--dsh-workspace-indent: 0px;\"><span class=\"_root_38jqx_3\"><div class=\"_7VDZUG_projectRow\" data-row-key=\"workspace:C:\\Users\\fsafsafsa\\Desktop\\MVS知识库\\MVS Agent\" role=\"treeitem\" aria-expanded=\"false\" draggable=\"true\"><span class=\"_7VDZUG_slot _7VDZUG_folder\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" stroke-width=\"1\"><path d=\"M1.50439 3.11059C1.50439 2.55831 1.95211 2.1106 2.50439 2.1106H5.43389C5.67773 2.1106 5.91318 2.19969 6.09593 2.36113L7.71649 3.79265C7.89924 3.95409 8.1347 4.04319 8.3785 4.04319H13.4958C14.0481 4.04319 14.4958 4.4909 14.4958 5.04319V12.8894C14.4958 13.4417 14.0481 13.8894 13.4958 13.8894H2.50439C1.95211 13.8894 1.50439 13.4417 1.50439 12.8894V4.04319V3.11059Z\" stroke=\"currentColor\"></path><path d=\"M3.63501 7.66614H12.3647\" stroke=\"currentColor\"></path></svg></span><span class=\"_7VDZUG_slot _7VDZUG_chevron\"><svg width=\"14\" height=\"14\" class=\"_7VDZUG_arrow\" viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" stroke-width=\"1\"><path d=\"M5.5 4.5C5.5 4.40714 5.52586 4.31612 5.57467 4.23713C5.62349 4.15815 5.69334 4.09431 5.77639 4.05279C5.85945 4.01126 5.95242 3.99368 6.0449 4.00202C6.13738 4.01036 6.22572 4.04429 6.3 4.1L10.967 7.6C11.0291 7.64657 11.0795 7.70697 11.1142 7.77639C11.1489 7.84582 11.167 7.92238 11.167 8C11.167 "
+}

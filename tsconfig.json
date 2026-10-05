@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "noEmit": true,
+
+    /* 相对导入必须写 .ts 后缀 —— Node 原生类型剥离的硬要求 */
+    "allowImportingTsExtensions": true,
+
+    /* 禁止 enum / namespace / 构造函数参数属性等「会生成代码」的语法，
+       保证源码可以被 Node 直接剥离类型后执行 */
+    "erasableSyntaxOnly": true,
+
+    /* 类型导入必须写 import type，否则剥离后会留下运行时不存在的 import */
+    "verbatimModuleSyntax": true,
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src", "test"],
+  /*
+   * ⚠️ **服务端这份配置刻意没有 DOM。**
+   *
+   * 如果它有，有人在 `src/host/` 里写 `document.title = …` 类型检查会通过，
+   * 到运行时才炸。这不是「两个项目」，是两边的编译环境真的不同。
+   *
+   * `src/web/` 原来在这里（那份弃用的 Vue 前端），**已经删掉了** ——
+   * 见 `tsconfig.web.json` 上面那段说明。
+   *
+   * 现在这里**没有 exclude**：`src` 和 `test` 整个都归它管，
+   * 而浏览器侧的共享面由 `tsconfig.web.json` **另外**再查一遍。
+   */
+}
