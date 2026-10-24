@@ -409,55 +409,52 @@ test('没有 Accept 头时按 API 处理（不能默认给 HTML）', async () =>
 })
 
 // ---------------------------------------------------------------------------
-// 公开静态页
+// 公开静态页：**现在一个都没有**
 //
-// `/brand/` 是**单文件、内联 CSS/SVG、零 JavaScript** 的静态页（审 logo 用），
-// 不调用任何 API，也没有秘密。给它加令牌换不到任何安全，只是让人多拿一次凭据。
+// 这一组原来是给 `/brand/`（审 logo 的对照页）写的：单文件、内联 CSS/SVG、
+// 零 JavaScript，不调任何 API，所以给它加令牌换不到任何安全。
 //
-// DSH 的设计说明里写的就是这条：「非 index 静态资产保持公开」。
+// 那两个页面（`/brand/` 与 DSH 复刻页 `/app/`）都是别人东西的复制品，
+// 已经连同生成器一起删掉了。于是这条白名单空了 —— 而**空着的白名单必须被测到**：
+// 否则某天有人把 `/brand` 加回去，这个页面就会以「公开」的身份重新出现。
 //
-// ⚠️ 但这**不等于把鉴权放开**：① Host ② Origin 两道仍然生效。
-// 所以下面除了「不要令牌也能开」，还要验证「伪造 Host 仍然被拒」。
+// ⚠️ 围栏那两条（Host / Origin）仍然保留，只是样本路径换成 `/`：
+// 它们验的是"公开不公开都要过围栏"，和具体页面无关。
 // ---------------------------------------------------------------------------
 
-test('★ 公开静态页：/brand/ 不带令牌也能开', async () => {
+test('★ 白名单是空的：/brand/ 与 /app/ 在要求令牌时都是 401', async () => {
   await withServer(scriptedModel([say('x')]), async ({ port }) => {
-    for (const path of ['/brand/']) {
+    for (const path of ['/brand/', '/app/']) {
       const res = await raw(port, { path, headers: { accept: 'text/html' } })
-      assert.equal(res.status, 200, `${path} 应当公开，实际 ${res.status}：${res.body.slice(0, 80)}`)
-      assert.match(String(res.headers['content-type']), /text\/html/)
+      assert.equal(res.status, 401, `${path} 不该再被免鉴权放行，实际 ${res.status}`)
     }
   })
 })
 
-test('★ 公开静态页仍然过 Host 围栏（公开 ≠ 放开鉴权）', async () => {
+test('★ 主页面仍然过 Host 围栏（公开 ≠ 放开鉴权，没公开也一样）', async () => {
   await withServer(scriptedModel([say('x')]), async ({ port }) => {
-    // 伪造 Host 是 DNS rebinding 的特征 —— 公开页也不能放过它
-    const rebound = await raw(port, { path: '/brand/', host: 'evil.example.com' })
-    assert.equal(rebound.status, 403, 'Host 不是回环时，公开页也必须拒绝')
+    // 伪造 Host 是 DNS rebinding 的特征
+    const rebound = await raw(port, { path: '/', host: 'evil.example.com' })
+    assert.equal(rebound.status, 403, 'Host 不是回环时必须拒绝')
   })
 })
 
-test('★ 公开静态页仍然过 Origin 围栏', async () => {
+test('★ 主页面仍然过 Origin 围栏', async () => {
   await withServer(scriptedModel([say('x')]), async ({ port }) => {
     const crossSite = await raw(port, {
-      path: '/brand/',
+      path: '/',
       host: `127.0.0.1:${port}`,
       origin: 'https://evil.example.com',
     })
-    assert.equal(crossSite.status, 403, '跨站 Origin 访问公开页也要拒绝')
+    assert.equal(crossSite.status, 403, '跨站 Origin 访问也要拒绝')
   })
 })
 
-test('★ 公开的是那两个前缀加根路径，不是整个静态目录', async () => {
+test('★ 没有任何路径免鉴权（白名单空着，谁都不例外）', async () => {
   await withServer(scriptedModel([say('x')]), async ({ port }) => {
-    /*
-     * 这条是护栏：`/brand/` 公开，但 **API、开发页、以及主页面本身都不能跟着公开**。
-     * 一个不小心把前缀写成 `/`，这条会立刻红。
-     */
-    for (const path of ['/state', '/dev', '/transactions', '/jobs', '/']) {
+    for (const path of ['/state', '/dev', '/transactions', '/jobs', '/', '/brand/', '/app/']) {
       const res = await raw(port, { path })
-      assert.equal(res.status, 401, `${path} 不该因为公开静态页而放开，实际 ${res.status}`)
+      assert.equal(res.status, 401, `${path} 不该免鉴权，实际 ${res.status}`)
     }
   })
 })
@@ -481,7 +478,7 @@ test('★ 不要令牌：页面和 API 都能直接访问', async () => {
   await withServer(
     scriptedModel([say('x')]),
     async ({ port }) => {
-      for (const path of ['/', '/state', '/dev', '/brand/', '/glue.js']) {
+      for (const path of ['/', '/state', '/dev', '/glue.js']) {
         const res = await raw(port, { path, host: `127.0.0.1:${port}` })
         assert.equal(res.status, 200, `${path} 在不要令牌时应当可访问，实际 ${res.status}`)
       }
@@ -784,7 +781,7 @@ test('带内容哈希的产物可以长缓存（内容一变名字就变，缓�
 
 test('HTML 一律不缓存（连问都不问）', async () => {
   await withServer(scriptedModel([say('x')]), async ({ port, token }) => {
-    for (const path of ['/', '/brand/']) {
+    for (const path of ['/']) {
       const res = await raw(port, { path, host: `127.0.0.1:${port}`, token })
       assert.equal(res.status, 200)
       assert.equal(res.headers['cache-control'], 'no-store', `${path} 应当是 no-store`)

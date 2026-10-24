@@ -150,38 +150,30 @@ for (const warning of runtime.warnings) {
 }
 
 /*
- * 复刻页和品牌页的地址。
+ * 地址工具。
  *
- * 两者都是**静态目录页**，不认识我们的令牌，所以不能只给 `?token=` ——
- * 得先让 `/auth` 换 cookie、再跳过去。`next` 参数（见 server.ts 的 `/auth`）
- * 就是为这件事加的。
+ * 两个名字很像，区别只有一句：**要不要先换一次 cookie**。
  *
- * ⚠️ 这里有两种地址，**别混用**：
+ *   · `publicUrl`    —— 不带令牌参数的干净地址。默认（不要求令牌）就用它
+ *   · `firstTimeUrl` —— 带令牌的入口：先让 `/auth` 换 cookie、再跳到 `next`
  *
- *   · `publicUrl`     —— 品牌页。它是**公开静态页**（零 JS、不调 API），
- *                        服务端列为公开路径，所以是真干净地址，直接可收藏。
- *   · `firstTimeUrl`  —— 主页面。要令牌，得先换一次 cookie。
- *
- * 分这么细是因为踩过两次：
- *   ① 把应用窗口指向「干净地址」，而那时它还要令牌 → **首次启动直接 401**；
- *   ② 反过来，把公开页也套上令牌链接 → 每次打开看着都像「必须带那一长串」。
- *
- * 只在文件**真的在**时才列出来：指一个打不开的地址是误导。
+ * 为什么必须有后者：页面上的 `fetch` 认 cookie，不认地址栏里的 `?token=`，
+ * 所以要求令牌时第一次必须先换一次。
  */
+/** web/ 下有没有这个文件。只在文件真的在时才把地址印出来 —— 指一个打不开的地址是误导 */
 const dist = (rel: string): boolean =>
   existsSync(path.join(fileURLToPath(new URL('../../web/', import.meta.url)), rel))
 
 /**
- * **公开地址** —— 不带令牌、不需要 cookie、直接可开、可以收藏。
+ * **干净地址** —— 不带令牌参数、直接可开、可以收藏。
  *
- * 现在只有品牌页属于这一类。
+ * 只在**不要求令牌**时能用（默认就是）。要令牌时必须走 firstTimeUrl。
  */
 const publicUrl = (rel: string): string => `${info.origin}${rel}`
 
 /** 带令牌的入口地址。**只在要求令牌时才有意义** */
 const firstTimeUrl = (rel: string): string => `${info.origin}/auth?token=${info.token}&next=${rel}`
 
-const brandUrl = dist('brand/index.html') ? publicUrl('/brand/') : undefined
 
 if (args.dev) {
   process.stdout.write(`\n  界面（Vite 开发服务器，带热更新）：\n    ${info.origin}/?token=${info.token}\n`)
@@ -191,13 +183,9 @@ if (args.dev) {
    * 令牌**默认关着**，所以这里一律给干净地址，不提令牌那一套。
    * 只有显式 `--require-token` 时横幅才会多出「首次打开」那一条。
    */
-  if (brandUrl !== undefined) {
-    process.stdout.write(`\n  品牌页    ${brandUrl}\n`)
-    process.stdout.write(`            ${dim('图形标各档尺寸 · 侧栏组合 · 深色底 —— 审 logo 用')}\n`)
-  }
   process.stdout.write(`  界面      ${publicUrl('/')}\n`)
   process.stdout.write(
-    `            ${dim('DSH 自己的前端在跑（组件、按钮、会话行都是它的代码）+ 品牌替换')}\n`,
+    `            ${dim('React 界面（ui/ → web/）：会话、工具块、设置都在这一份里')}\n`,
   )
   process.stdout.write(`  端点      ${info.origin}\n`)
 
@@ -232,16 +220,10 @@ if (args.dev) {
 
 if (args.app) {
   /*
-   * 窗口开**主界面** —— 也就是 `/`，现在是那份**可运行的**复刻页。
+   * 窗口开**主界面** —— 也就是 `/`，我们自己的那份 React 界面。
    *
-   * ⚠️ 不是品牌页。品牌页（`/brand/`）是**审 logo 用的工具页**：图形标各档
-   * 尺寸、侧栏组合、深色底，一屏摆开方便对比。它值得存在，但**不是「这个
-   * 应用长什么样」的答案**，默认开它只会让人困惑。我一度把它排在前面
-   * （那几天正好在审 logo），已改回来。
-   *
-   * ⚠️ 也**不是** `/dsh/` 那份静态快照。两者现在都叫「复刻页」，但
-   * `/dsh/` 是零 JS 的对照物，而 `/` 才是接了真实数据的那个。
-   * 我一度把窗口指向 `/dsh/`（那时 `/` 还是 Vue 那份），也改回来了。
+   * 这里原来还有两段"不是 X"的解释：不是 `/brand/`（logo 对照页）、不是 `/dsh/`
+   * （静态快照）。两个页面都已经删了（连同生成器），所以那两段只剩考古价值。
    *
    * 地址**取决于要不要令牌**：
    *   · 不要令牌（默认）→ 干净地址

@@ -57,12 +57,17 @@ const COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 /**
  * **无需令牌**的静态页前缀。
  *
- * 现在只剩品牌对照页 —— 它是审 logo 用的工具页，纯静态、零 JS、不含秘密。
+ * **现在是空的。** 原来这里只有两个：DSH 复刻页（`/app/`）与审 logo 的对照页
+ * （`/brand/`）。两个都是别人东西的复制品，已经连同生成器一起删掉了 ——
+ * 所以不存在「某天再把它生成出来」的可能。
  *
- * ⚠️ 主页面（`/`）**不在**这里。它加载 glue.js、会调 `/state` 和 `/command` ——
+ * 白名单清空之后，静态资源一律要令牌（开着的时候）。这不是变严了，
+ * 是**没有不需要保护的东西了**：这个目录里现在只有我们自己的界面。
+ *
+ * ⚠️ 主页面（`/`）从来**不在**这里。它加载脚本、会调 `/state` 和 `/command` ——
  * 那是能执行命令的通道，必须有真凭据（令牌开着的时候）。
  */
-const PUBLIC_STATIC_PREFIXES = ['/brand']
+const PUBLIC_STATIC_PREFIXES: string[] = []
 
 /**
  * 服务端发的东西在哪儿。
@@ -75,11 +80,11 @@ const PUBLIC_STATIC_PREFIXES = ['/brand']
  * 「构建 → 注入脚本 → 算内容哈希 → 重启」。那套东西**一行都不需要** ——
  * 它带来的全部是故障面（构建要 Edge、注入会插错位置、哈希算错就等于缓存没生效）。
  *
- * 它唯一「生成」的时刻是**首次从 DSH 抓那一份 DOM**，而那件事很少发生。
- * 抓完就提交，从此它是我们的文件，由我们手改。
+ * `web/` 里只有两类东西：`index.html`（我们自己的入口）、
+ * `app-<哈希>.js|css`（`npm run ui:build` 的产物）与字体。
  *
- * `web/brand/` 是工具生成的 logo 对照页（`tools/logo-sheet.mjs`）；
- * 原来的 `web/app/`（DSH 前端实验页）已归档到 `_attic/`。
+ * 这里没有、也不该有别人的前端：`/app/`（DSH 复刻页）与 `/brand/`（logo 对照页）
+ * 连同它们的生成器都已经删掉。
  */
 const UI_DIR = fileURLToPath(new URL('../../web/', import.meta.url))
 /**
@@ -214,7 +219,7 @@ function cachePolicyFor(filename: string, type: string): string {
   const hashed = /-[A-Za-z0-9_-]{8,}\.[a-z0-9]+$/i.test(filename)
   if (hashed) return 'public, max-age=31536000, immutable'
   /*
-   * ★ **非哈希的 UI 源文件（`replica-shim.js`、页面脚本）走 `no-cache`。**
+   * ★ **非哈希的 UI 文件（`index.html`、`glue.js`）走 `no-cache`。**
    *
    * 契约写在这里，测试也守着它（`test/server.test.ts` 的"名字固定的 JS 不能长缓存"）。
    * 含义是：**每次用之前都必须回源校验** —— 而这条策略不发 ETag / Last-Modified，
@@ -440,11 +445,15 @@ export class HostServer {
     /*
      * ③ 无需令牌的页面。
      *
-     * `/brand/` 和 `/dsh/` 是**单文件、内联 CSS、内联 SVG、零 JavaScript** 的静态页，
-     * 不调用任何 API，也不含任何秘密。给它们加令牌只是让人多拿一次凭据，
-     * **换不到任何安全** —— 因为这里没有需要保护的东西。
+     * **现在一个都没有**（`PUBLIC_STATIC_PREFIXES` 是空的）。
      *
-     * 这也是 DSH 的做法：它的设计说明里写着「非 index 静态资产保持公开」。
+     * 这里原来放着两个：`/brand/` 与 `/dsh/`，理由是「纯静态、内联 CSS、
+     * 零 JavaScript、不调任何 API」。那个理由本身没问题，问题在别处：
+     * 它们是**别人东西的复制品**，而且其中一个（`/brand/`）后来连生成物都没有了，
+     * 于是这条白名单指向一个 404 —— 一条既不可用又免鉴权的路由。
+     *
+     * 现在的规矩：静态资源一律要令牌（开着的时候）。要再开一条公开路由，
+     * 得先证明"这份文档里确实没有需要保护的东西"，并且**它得真的存在**。
      *
      * ⚠️ **绝不能把 `/api/` 加进来**。那是能执行命令的通道，
      * 而且 Host 是客户端自己填的 header —— 能连上 socket 就能声明自己是 localhost，
@@ -472,10 +481,12 @@ export class HostServer {
   /**
    * 这条路径当前是不是「无需令牌」的。
    *
-   * 判据是「**这份文档里有没有需要保护的东西**」：
+   * 判据是「**这份文档里有没有需要保护的东西**」。现在唯一被判定为公开的
+   * 是一个都没有 —— `PUBLIC_STATIC_PREFIXES` 空着，所以这个函数永远返回 false。
    *
-   *   · `/brand/` —— 审 logo 的对照页。纯静态、零 JS、不调任何 API → 公开
-   *   · `/`       —— **主页面**。加载 glue.js，会调 `/state` 和 `/command` → 要令牌
+   * 保留它的形状（而不是直接删掉调用点）是因为「哪些路径不需要令牌」必须是
+   * 一张**显式的表**：加一条要写理由，删一条要写理由。散在 `if` 里的隐式判断
+   * 正是这个项目反复踩过的那种坑。
    *
    * 原来这里还有一层「根路径跟着入口文档走」的判断，是为了兼容
    * 「`/` 时而出静态快照、时而出别的东西」。现在 `/` 永远是同一个文件，
@@ -572,7 +583,8 @@ export class HostServer {
        * 浏览器**直接导航**过来（地址栏敲 URL、点了个旧书签、点了个过期链接）时，
        * 给一张能看懂的页面，而不是丢一句 JSON。
        *
-       * 起因：有人打开 `/brand/` 看到的是一整屏 `{"error":"令牌缺失或不正确"}`。
+       * 起因：有人打开一个不在白名单里的路径（当时是 `/brand/`）看到的是一整屏
+       * `{"error":"令牌缺失或不正确"}`。
        * 那句 JSON 对 API 调用是对的，但对**人**来说等于什么都没说 ——
        * 它不告诉人「为什么」也不告诉人「怎么办」。
        *
@@ -1032,27 +1044,20 @@ export class HostServer {
       return
     }
 
-    // ── 产品界面：dist/web 里的静态文件 ────────────────────────────────
-    //
-    // `/dsh` 和 `/brand` 是**目录型入口**，不是一个文件。`looksLikeAsset` 靠
-    // 扩展名判断，认不出它们，所以这些前缀要单独列出来。
-    //
-    //   /        自己的界面（`web/` 下的静态文件，由 `ui/` 构建而来）
-    //   /brand/  品牌对照页（见 tools/logo-sheet.mjs）
-    //
-    // 加新页面就在这里加一个前缀。
+    // ── 产品界面：`web/` 里的静态文件 ────────────────────────────────
     /*
-     * `/brand` 是**目录型入口**，不是一个文件 —— `looksLikeAsset`
-     * 靠扩展名判断，认不出它，所以这种前缀要单独列出来。
+     * 目录型入口要单独列出来：`looksLikeAsset` 靠扩展名判断，
+     * 认不出「一个目录对应的 index.html」。
      *
-     *   /        主页面（`web/index.html`，由 `tools/build-ui.mjs` 从 `ui/` 产出）
-     *   /brand/  品牌对照页（tools/logo-sheet.mjs 生成）
+     * **现在是空的**：`/` 由下面那个判断单独处理，没有第二个页面。
+     * 这里原来有 `/brand`（logo 对照页）与 `/app`（DSH 前端实验版）——
+     * 两个都是别人的东西，连同生成器与 `_attic` 里的归档一起删掉了。
      *
-     * ⚠️ 这里原来还有 `/app`（DSH 前端跑起来的实验版）。那套东西连同它的构建脚本
-     * 已经归档到 `_attic/` 下（目录名是 dsh-era- 加时间戳），路径不再存在 ——
-     * 留着它只会让下一个人以为那个页面还在。**能少一个假的入口就少一个。**
+     * ⚠️ 加新页面前先想清楚它是不是"我们自己的东西"。这条不是洁癖：
+     * 之前那两个页面都活在"归档了但入口还在"的状态里，于是要么 404、
+     * 要么指向一个没人再维护的实现 —— 比没有更糟。
      */
-    const uiPages = ['/brand']
+    const uiPages: string[] = []
     const isUiPage = uiPages.some(
       (prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`),
     )
@@ -1615,7 +1620,7 @@ export class HostServer {
     pathname: string,
     cookies: Record<string, string>,
   ): Promise<void> {
-    // 目录型路径要落到它的 index.html：`/dsh` 和 `/dsh/` 都指 `dsh/index.html`。
+    // 目录型路径要落到它的 index.html：`/foo` 和 `/foo/` 都指 `foo/index.html`。
     // 判据是「最后一段没有扩展名」——那不可能是一个文件。
     const raw = pathname === '/' ? this.#entryDocument() : pathname.replace(/^\/+/, '')
     const relative = raw === 'index.html' || /\.[a-z0-9]+$/i.test(raw) ? raw : `${raw.replace(/\/+$/, '')}/index.html`
@@ -1776,7 +1781,7 @@ function tokenHelpPage(pathname: string): string {
     '<p><strong>怎么打开：</strong>启动守护进程的那个终端窗口里印了带令牌的地址，' +
     '复制那一整条（它长这样）：</p>' +
     '<pre style="background:#f5f5f5;padding:12px;border-radius:6px;overflow-x:auto">' +
-    'http://127.0.0.1:&lt;端口&gt;/auth?token=&lt;令牌&gt;&amp;next=/brand/</pre>' +
+    'http://127.0.0.1:&lt;端口&gt;/auth?token=&lt;令牌&gt;&amp;next=/</pre>' +
     '<p><strong>为什么旧链接会失效：</strong>每次重启守护进程都会换一个新令牌，' +
     '上一条消息里的链接就作废了。</p>' +
     '<p style="color:#7f8287">已经打开的界面窗口不必再点链接 —— 它换过 cookie，' +
