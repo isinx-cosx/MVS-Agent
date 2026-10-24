@@ -20,8 +20,11 @@ import {
   type ChatMessage,
   type SessionSummary,
   type ToolCallSummary,
+  type TransactionSummary,
   type WorkspaceSummary,
 } from './client.ts'
+import { isAtBottom, stickDelta } from './stick.ts'
+import { displayedModel, selectedModel } from './model-choice.ts'
 import { Markdown } from './markdown.tsx'
 import { SettingsPage } from './Settings.tsx'
 import { resetSettings, updateSettings, useSettings } from './settings.ts'
@@ -90,21 +93,21 @@ function prettyJson(raw: string | undefined): string {
  *
  * ## 为什么不用原生 `<select>`
  *
- * 它的**弹层由操作系统画** —— 字体、行高、间距、圆角、分组标题，我们一个都改不了 ✓。
- * 而它旁边就摆着另一个控件，两者并排时差别最明显 ✗。
+ * 它的**弹层由操作系统画** —— 字体、行高、间距、圆角、分组标题，我们一个都改不了。
+ * 而它旁边就摆着另一个控件，两者并排时差别最明显。
  *
  * ## 代价要一样一样补回来
  *
  * 原生 `<select>` 白送的东西，自己写就都得自己实现：
- *   · 点外部关闭 ✓（少了它，下拉框会一直挂在页面上 ✗）
- *   · Esc 关闭 ✓、↑↓ 打开 ✓（少了键盘用户只能靠鼠标 ✓）
- *   · `role="listbox"` / `role="option"` / `aria-selected` / `aria-expanded` ✓
- *     （少了屏幕阅读器读不出这是个可选项列表 ✓）
- *   · 当前项要**看得出来** ✓ —— 这里用底色 + 左侧粗边，**不用 ✓ 符号**
- *     （这个界面里不用对勾/叉号当标记 ✓）
+ *   · 点外部关闭（少了它，下拉框会一直挂在页面上）
+ *   · Esc 关闭、↑↓ 打开（少了键盘用户只能靠鼠标）
+ *   · `role="listbox"` / `role="option"` / `aria-selected` / `aria-expanded`
+ *     （少了屏幕阅读器读不出这是个可选项列表）
+ *   · 当前项要**看得出来** —— 这里用底色 + 左侧粗边，**不用 符号**
+ *     （这个界面里不用对勾/叉号当标记）
  *
  * ⚠️ 箭头用**字形**（`▾`）不用 SVG —— 这个项目踩过：SVG 加号在用户屏幕上
- * 一个像素都没画出来，换成字形就好了 ✓。
+ * 一个像素都没画出来，换成字形就好了。
  */
 interface DropdownItem {
   key: string
@@ -193,6 +196,146 @@ function Dropdown({
         </div>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * **改动与撤销。**
+ *
+ * 这个面板回答两个问题，而且是**按这个顺序**：
+ *
+ *   1. **这一步改了什么？**（路径列表）—— 每小时都要问几十次
+ *   2. 要不要**撤回这一条**？—— 一年问几次
+ *
+ * 顺序不能反：原来的设计把路径留到"按了撤销之后的报告里"，
+ * 可用户得先看见改了什么，才谈得上决定要不要撤。
+ *
+ * ## 为什么放在侧栏、而不是输入框里
+ *
+ * 输入框那一块你定过规矩：**内容要少、要被顶上去，不许往里塞东西**。
+ * 而看改动是"一边看对话一边看"的事 —— 侧栏正好在那儿，且它是可折叠的。
+ *
+ * ## 只撤单条，没有"全部撤回"
+ *
+ * 这是刻意的，不是没做：`guard.ts:65-70` 写着有后台作业在跑时，
+ * 「动作前 → 动作后」这个时间窗的归属**无法确定** —— 而"整会话回滚"正是
+ * 归属最不确定的那个粒度。**宁可少一个按钮，也不提供一个会删错东西的按钮**。
+ */
+function ChangesPanel({
+  transactions,
+  onLoad,
+  onRevert,
+  reverting,
+}: {
+  transactions: TransactionSummary[] | null
+  onLoad: () => void
+  onRevert: (txnId: string) => void
+  reverting: string | null
+}) {
+  const [open, setOpen] = useState(false)
+  const [confirming, setConfirming] = useState<string | null>(null)
+
+  /* 打开时才拉 —— 投影只带计数，路径按需要 */
+  useEffect(() => {
+    if (open && transactions === null) onLoad()
+  }, [open, transactions, onLoad])
+
+  const total = transactions === null ? 0 : transactions.length
+
+  return (
+    <section className="side-section changes">
+      <button
+        type="button"
+        className="changes-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="name">改动{transactions === null ? '' : `（${total}）`}</span>
+        <span className="dd-caret" aria-hidden="true">
+          {open ? '▴' : '▾'}
+        </span>
+      </button>
+
+      {open ? (
+        <div className="changes-body">
+          {transactions === null ? (
+            <p className="side-empty">读取中…</p>
+          ) : total === 0 ? (
+            <p className="side-empty">这个会话还没有产生改动</p>
+          ) : (
+            transactions.map((txn) => {
+              /* 三种变化分开列 —— 混在一起看不出"是新增还是覆盖" */
+              const groups: { label: string; paths: string[] }[] = [
+                { label: '新增', paths: txn.paths?.added ?? [] },
+                { label: '修改', paths: txn.paths?.modified ?? [] },
+                { label: '删除', paths: txn.paths?.removed ?? [] },
+              ]
+              const changed = groups.reduce((sum, g) => sum + g.paths.length, 0)
+              return (
+                <div className="change-item" key={txn.id}>
+                  <div className="change-head" title={txn.summary}>
+                    <span className="change-tool">{txn.tool}</span>
+                    <span className="change-count">
+                      {txn.added > 0 ? `+${txn.added} ` : ''}
+                      {txn.modified > 0 ? `~${txn.modified} ` : ''}
+                      {txn.removed > 0 ? `-${txn.removed}` : ''}
+                    </span>
+                  </div>
+
+                  {txn.paths === undefined ? (
+                    <div className="set-hint">（没带路径）</div>
+                  ) : changed === 0 ? (
+                    <div className="set-hint">这次调用没有留下净改动</div>
+                  ) : (
+                    groups
+                      .filter((g) => g.paths.length > 0)
+                      .map((g) => (
+                        <div className="change-group" key={g.label}>
+                          <span className="change-kind">{g.label}</span>
+                          <span className="change-paths">{g.paths.join('、')}</span>
+                        </div>
+                      ))
+                  )}
+
+                  {confirming === txn.id ? (
+                    <div className="side-confirm">
+                      <span>撤回这次改动？</span>
+                      <button
+                        type="button"
+                        className="side-mini danger"
+                        onClick={() => {
+                          setConfirming(null)
+                          onRevert(txn.id)
+                        }}
+                      >
+                        撤回
+                      </button>
+                      <button type="button" className="side-mini" onClick={() => setConfirming(null)}>
+                        取消
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="side-mini"
+                      disabled={reverting !== null || changed === 0}
+                      title={
+                        changed === 0
+                          ? '这次调用没有留下净改动，没有可撤回的东西'
+                          : '把这几个文件还原到这次调用之前的状态'
+                      }
+                      onClick={() => setConfirming(txn.id)}
+                    >
+                      {reverting === txn.id ? '撤回中…' : '撤回这次'}
+                    </button>
+                  )}
+                </div>
+              )
+            })
+          )}
+        </div>
+      ) : null}
+    </section>
   )
 }
 
@@ -360,7 +503,7 @@ function ThinkBlock({ reasoning, active }: { reasoning: string; active: boolean 
         onScroll={(event) => {
           const el = event.currentTarget
           /* 离底部 24px 以内算"还在跟随" */
-          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+          stick.current = isAtBottom(el)
         }}
       >
         {reasoning}
@@ -507,6 +650,10 @@ function Sidebar({
   width,
   drawerOpen,
   onCloseDrawer,
+  transactions,
+  onLoadChanges,
+  onRevert,
+  reverting,
   onAddWorkspace,
   onOpenSettings,
   onCreateSession,
@@ -528,6 +675,11 @@ function Sidebar({
   drawerOpen: boolean
   /** 关掉抽屉（选中会话、点遮罩、按 Esc 都会调它） */
   onCloseDrawer: () => void
+  /* ── 改动与撤销 ── */
+  transactions: TransactionSummary[] | null
+  onLoadChanges: () => Promise<void>
+  onRevert: (txnId: string) => void
+  reverting: string | null
   onAddWorkspace: () => void
   onOpenSettings: () => void
   /** 在指定工作区下新建对话 */
@@ -561,9 +713,9 @@ function Sidebar({
   const byUpdated = (a: SessionSummary, b: SessionSummary): number => b.updatedAt.localeCompare(a.updatedAt)
 
   /*
-   * `groups` 以前是每次渲染都重算的 ✗ —— 十几个会话时无所谓，但一叠加"搜索"，
-   * 每敲一个字都会把所有会话重新分组 + 全表过滤一遍 ✓，而**打字引起卡顿时的表现
-   * 就是"界面在抖"** ✗（这个项目在抖动上栽过，所以这里顺着一起修了 ✓）。
+   * `groups` 以前是每次渲染都重算的 —— 十几个会话时无所谓，但一叠加"搜索"，
+   * 每敲一个字都会把所有会话重新分组 + 全表过滤一遍，而**打字引起卡顿时的表现
+   * 就是"界面在抖"**（这个项目在抖动上栽过，所以这里顺着一起修了）。
    */
   const groups = useMemo(() => {
     const known = new Set(workspaces.map((w) => w.path))
@@ -583,15 +735,15 @@ function Sidebar({
   /*
    * ── 搜索与条数上限 ────────────────────────────────────────────────────
    *
-   * 为什么要有上限：`updatedAt` 排序意味着**最旧的永远在下面** ✓，而列表越长，
-   * 想找的东西就越难碰到 —— 一个工作区攒到上百条对话时，侧栏会变成一片滚动条 ✓。
+   * 为什么要有上限：`updatedAt` 排序意味着**最旧的永远在下面**，而列表越长，
+   * 想找的东西就越难碰到 —— 一个工作区攒到上百条对话时，侧栏会变成一片滚动条。
    *
    * 三件事一起做才成立：
-   *   1. 默认每组只显示最近几条 ✓
-   *   2. 该组还有更多时，明确写出"还有几条" ✓（**不能悄悄截断** —— 那会让人
-   *      以为对话丢了 ✗）
-   *   3. 搜索时**显示全部匹配** ✓，并且**自动展开**命中的组 ✓
-   *      （否则匹配项藏在一个收起来的分组里，搜索结果看起来是空的 ✗）
+   *   1. 默认每组只显示最近几条
+   *   2. 该组还有更多时，明确写出"还有几条"（**不能悄悄截断** —— 那会让人
+   *      以为对话丢了）
+   *   3. 搜索时**显示全部匹配**，并且**自动展开**命中的组
+   *      （否则匹配项藏在一个收起来的分组里，搜索结果看起来是空的）
    */
   const PER_GROUP = 6
   const [query, setQuery] = useState('')
@@ -606,7 +758,7 @@ function Sidebar({
     rows: SessionSummary[],
   ): { visible: SessionSummary[]; hidden: number } => {
     if (trimmedQuery !== '') {
-      /* 搜索时给出全部匹配 —— 搜索的意义就是"把藏在下面的东西捞出来" ✓ */
+      /* 搜索时给出全部匹配 —— 搜索的意义就是"把藏在下面的东西捞出来" */
       const matched = rows.filter(
         (s) =>
           (s.title === '' ? '未命名对话' : s.title).toLowerCase().includes(trimmedQuery) ||
@@ -639,8 +791,8 @@ function Sidebar({
     /*
      * 搜索期间**一律展开**。
      *
-     * 匹配项如果藏在一个收起来的分组里，搜索结果看起来就是空的 ✗ —— 而"搜了却没有"
-     * 会让人以为对话真的没了。配合下面"没命中的组不渲染"，这里直接展开就不会有噪音 ✓。
+     * 匹配项如果藏在一个收起来的分组里，搜索结果看起来就是空的 —— 而"搜了却没有"
+     * 会让人以为对话真的没了。配合下面"没命中的组不渲染"，这里直接展开就不会有噪音。
      */
     if (trimmedQuery !== '') return true
     return expanded === null ? key === currentWorkspace : expanded.has(key)
@@ -674,7 +826,7 @@ function Sidebar({
           会话搜索。
 
           只在**真的会用到**的时候出现（会话总数超过一屏）—— 三个对话时摆一个搜索框
-          是噪音 ✓；而对话一多，找一个旧对话的成本会突然变得很高 ✓。
+          是噪音；而对话一多，找一个旧对话的成本会突然变得很高。
         */}
         {sessions.length > PER_GROUP ? (
           <div className="side-search">
@@ -874,7 +1026,7 @@ function Sidebar({
                 {group.rows.length === 0 ? <li className="side-empty">还没有对话</li> : null}
                 {/*
                   **被折叠掉的那几条必须说出来。**
-                  悄悄截断会让人以为对话丢了 ✗；而这个按钮同时是"我要看全部"的出口 ✓。
+                  悄悄截断会让人以为对话丢了；而这个按钮同时是"我要看全部"的出口。
                 */}
                 {hidden > 0 ? (
                   <li>
@@ -896,6 +1048,13 @@ function Sidebar({
 
         {groups.length === 0 ? <div className="side-empty">还没有工作区</div> : null}
       </section>
+
+      <ChangesPanel
+        transactions={transactions}
+        onLoad={() => void onLoadChanges()}
+        onRevert={onRevert}
+        reverting={reverting}
+      />
 
       <div className="side-foot">
         {error === null ? null : <div className="side-error">{error}</div>}
@@ -934,6 +1093,11 @@ export function App() {
     contextTokens,
     contextWindowTokens,
     lastUsage,
+    totalUsage,
+    model: sessionModel,
+    sessionProvider,
+    malformedEvents,
+    selectModel,
     fatigue,
     send,
     stop,
@@ -941,6 +1105,10 @@ export function App() {
     setMode,
     resetFatigue,
     approve,
+    transactions,
+    loadTransactions,
+    revert,
+    reverting,
   } = useSession(selected)
 
   /* ── 生成速度：**最近 5 秒的平均** ─────────────────────────────────────
@@ -1028,6 +1196,8 @@ export function App() {
     config,
     contextWindow,
     picker,
+    skills,
+    plugins,
     error: indexError,
     refresh: refreshIndex,
   } = useIndex(running)
@@ -1117,11 +1287,11 @@ export function App() {
 
   /* ── 模型：切换（会话级）与配置（全局） ─────────────────────────────────
    *
-   * 两件事刻意分开，因为它们的影响范围不同 ✓：
-   *   · 切换 = `select_model`，**只动当前会话** ✓
-   *   · 保存 = `POST /model-config`，写 `~/.mvs-agent/config.json`，**所有会话一起变** ✓
+   * 两件事刻意分开，因为它们的影响范围不同：
+   *   · 切换 = `select_model`，**只动当前会话**
+   *   · 保存 = `POST /model-config`，写 `~/.mvs-agent/config.json`，**所有会话一起变**
    *
-   * 混成一个按钮的话，用户在设置页点一下就会把别的会话也换掉，而他看不出来发生过什么 ✗。
+   * 混成一个按钮的话，用户在设置页点一下就会把别的会话也换掉，而他看不出来发生过什么。
    */
   const [savingConfig, setSavingConfig] = useState(false)
   const [configResult, setConfigResult] = useState<string | null>(null)
@@ -1129,15 +1299,24 @@ export function App() {
   /**
    * 把**当前会话**切到某个供应商的模型。
    *
-   * ⚠️ 只传 provider 与模型名 ✓ —— 不碰密钥。配置里的 `apiKey` 是掩码，
-   * 任何把它带上再写回去的路径都会把真密钥覆盖成一串点 ✓。
+   * ⚠️ 只传 provider 与模型名 —— 不碰密钥。配置里的 `apiKey` 是掩码，
+   * 任何把它带上再写回去的路径都会把真密钥覆盖成一串点。
    */
   const switchModel = (provider: string, model: string): void => {
     if (sessionId === null || model === '') return
     void (async () => {
       setActionError(null)
       try {
-        await postCommand({ type: 'select_model', sessionId, provider, model })
+        /*
+         * ⚠️ **必须走会话命令那条路**（`useSession` 的 `selectModel`），
+         * 不能在这里直接 `postCommand` —— 那条路上有两样必不可少的东西：
+         *   · 优先走 WS（服务端收到命令就顺手订阅那条连接）
+         *   · **命令成功后重拉投影**
+         *
+         * 少了第二样，切完就得刷新才看得见 —— 用户报的"点了没用"正是这个，
+         * 而浏览器 E2E 稳定复现了它（`modelChanged: false` 连跑两次一致）。
+         */
+        await selectModel(provider, model)
         refreshIndex()
       } catch (err) {
         /* ⚠️ 失败**必须有地方显示** —— 静默的"点了没反应"是这个项目最恨的一类 */
@@ -1147,18 +1326,70 @@ export function App() {
   }
 
   /*
+   * 技能的三条命令。
+   *
+   * 它们都是**人**的动作（确认哈希、停用、重扫），模型没有对应的工具 ——
+   * 这是「模型能写技能文件，但不能自己批准它」那条链的断点。
+   *
+   * 发完之后重拉一次索引：`/state.skills` 会跟着变，而设置页显示的就是它。
+   */
+  const runSkillCommand = (command: Record<string, unknown>): void => {
+    void (async () => {
+      try {
+        setActionError(null)
+        await postCommand(command)
+        refreshIndex()
+      } catch (err) {
+        /* 失败必须有地方显示：技能页上"点了没反应"是最难查的一种 */
+        setActionError(`技能操作没成：${err instanceof Error ? err.message : String(err)}`)
+      }
+    })()
+  }
+
+  /* 插件：同样都是人的动作（确认清单哈希、按工作区启用、重扫） */
+  const runPluginCommand = (command: Record<string, unknown>): void => {
+    void (async () => {
+      try {
+        setActionError(null)
+        await postCommand(command)
+        refreshIndex()
+      } catch (err) {
+        setActionError(`插件操作没成：`)
+      }
+    })()
+  }
+
+  /*
    * 输入框下面那一行要用的两组选项。
    *
-   * 模型**按供应商分组** ✓ —— 因为 `select_model` 本来就要 provider + model 两个参数 ✓，
-   * 分组之后"换个供应商的模型"是一次选择就能完成的事 ✓；不分组的代价是用户得先
-   * 去设置页换供应商、再回来选模型（两步，而且第一步还会影响别的会话 ✓）。
+   * 模型**按供应商分组** —— 因为 `select_model` 本来就要 provider + model 两个参数，
+   * 分组之后"换个供应商的模型"是一次选择就能完成的事；不分组的代价是用户得先
+   * 去设置页换供应商、再回来选模型（两步，而且第一步还会影响别的会话）。
    *
-   * 供应商下没声明 `models` 时只列它当前的模型 ✓ —— 与其编几个不存在的选项，
-   * 不如让列表里只有真能用的 ✓。
+   * 供应商下没声明 `models` 时只列它当前的模型 —— 与其编几个不存在的选项，
+   * 不如让列表里只有真能用的。
    */
   const activeRoute = config?.activeProvider ?? ''
   const currentProvider = activeRoute === '' ? undefined : config?.providers?.[activeRoute]
-  const currentModel = currentProvider?.model ?? config?.model.model ?? ''
+  /*
+   * ★ **会话的模型从投影来**，不是从 /state 的全局配置来 ——
+   * 那个是「默认用哪个」，而这个会话可能已经被 select_model 切走了。
+   * 读错地方的表现就是「点了没用」：daemon 真的切了、投影也变了，
+   * 界面照旧显示全局默认值。全局配置只在会话还没报出模型时兜底。
+   */
+  const currentModel = displayedModel({
+    session: sessionModel,
+    provider: currentProvider?.model ?? '',
+    global: config?.model.model ?? '',
+  })
+
+  /* 哪个该被标成「选中」：会话自己的选择优先于全局配置（见 model-choice.ts 的注释）*/
+  const chosen = selectedModel({
+    sessionProvider,
+    sessionModel,
+    globalProvider: activeRoute,
+    globalModel: currentProvider?.model ?? '',
+  })
 
   const modelGroups = Object.entries(config?.providers ?? {}).map(([route, p]) => {
     const names = p.models ?? (p.model === undefined || p.model === '' ? [] : [p.model])
@@ -1168,7 +1399,7 @@ export function App() {
         key: `${route}\u0000${name}`,
         label: name,
         hint: p.baseUrl === undefined ? `${route} · ${name}` : `${route} · ${name} @ ${p.baseUrl}`,
-        selected: route === activeRoute && name === currentModel,
+        selected: route === chosen.provider && name === chosen.model,
         onPick: () => switchModel(route, name),
       })),
     }
@@ -1183,7 +1414,7 @@ export function App() {
   }))
 
   /**
-   * 保存配置。**只有用户按下"保存"才会走到这里** ✓ ——
+   * 保存配置。**只有用户按下"保存"才会走到这里** ——
    * 这是这个项目的第一条硬规则（配置文件只能因为一次明确的用户动作而改变）。
    */
   const saveConfig = (patch: Record<string, unknown>): void => {
@@ -1408,8 +1639,24 @@ export function App() {
     if (composer === null || log === null) return
 
     const apply = (): void => {
-      log.style.setProperty('--composer-h', `${composer.getBoundingClientRect().height}px`)
+      /*
+       * ★ **量完还要把滚动位置一起挪。**
+       *
+       * 只改 `--composer-h` 的话，多出来的那段底部留白在**下面**，而 `scrollTop`
+       * 一点没动 —— 于是在"贴着底部"的时候，最后几行正好被长高了的输入框盖住。
+       * 用户报的就是这个："输入框会挡住一些正文"。
+       *
+       * 判断与算术都抽在 `ui/stick.ts` 里（那里能被单元测试盯住）——
+       * 这里只剩读元素、写样式这种一次性的胶水。
+       */
+      const atBottom = isAtBottom(log)
+      const height = composer.getBoundingClientRect().height
+      const delta = stickDelta({ atBottom, previousHeight: previous, height })
+      log.style.setProperty('--composer-h', `${height}px`)
+      if (delta !== 0) log.scrollTop += delta
+      previous = height
     }
+    let previous = composer.getBoundingClientRect().height
     apply()
 
     if (typeof ResizeObserver === 'undefined') return
@@ -1417,6 +1664,41 @@ export function App() {
     observer.observe(composer)
     return () => observer.disconnect()
   }, [])
+
+  /*
+   * ★★ **每次渲染后再量一次 —— 这才是「输入框长高」的主力。**
+   *
+   * ## 为什么上面那个 ResizeObserver 不够（实测）
+   *
+   * 浏览器诊断（`tools/diag-composer.mjs`）量出来的数字：
+   *
+   *     输入框长到 340px   →   `--composer-h` 仍然是 150.6px
+   *     padding-bottom     →   仍是 162.6px                
+   *     于是最后一条正文被盖住 **159px**                    
+   *
+   * 也就是说：变量在**挂载时量过一次之后就没再更新** ——
+   * 光靠 observer 不足以把这一块撑起来。
+   *
+   * ## 为什么"每次渲染"是对的
+   *
+   * 输入框长高的**唯一原因**是内容变了，而内容变了必然伴随一次渲染
+   *（受控 textarea）。所以在 layout 阶段量一次，时机**正好**，
+   * 而且不依赖 observer 的实现细节。
+   *
+   * observer 仍然留着：字号变化、字体加载完、窗口缩放这类**不经过渲染**的
+   * 尺寸变化，只有它能看见。两条腿缺一不可。
+   */
+  useLayoutEffect(() => {
+    const composer = bottomRef.current
+    const log = logRef.current
+    if (composer === null || log === null) return
+    const height = composer.getBoundingClientRect().height
+    const atBottom = isAtBottom(log)
+    const previous = Number(log.style.getPropertyValue('--composer-h').replace('px', '')) || 0
+    const delta = stickDelta({ atBottom, previousHeight: previous, height })
+    log.style.setProperty('--composer-h', `${height}px`)
+    if (delta !== 0) log.scrollTop += delta
+  })
 
   const hasLive = live.reasoning !== '' || live.text !== '' || live.active
 
@@ -1439,7 +1721,7 @@ export function App() {
   const onLogScroll = (): void => {
     const el = logRef.current
     if (el === null) return
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32
+    stick.current = isAtBottom(el)
   }
 
   const scrollToBottom = (): void => {
@@ -1539,6 +1821,10 @@ export function App() {
         width={sidebarWidth}
         drawerOpen={drawerOpen}
         onCloseDrawer={() => setDrawerOpen(false)}
+        transactions={transactions}
+        onLoadChanges={loadTransactions}
+        onRevert={(txnId) => void revert(txnId)}
+        reverting={reverting}
         onAddWorkspace={addWorkspace}
         onOpenSettings={() => setView('settings')}
         onCreateSession={createSession}
@@ -1637,11 +1923,46 @@ export function App() {
             cleaning={cleaning}
             cleanupNote={cleanupNote}
             onClose={() => setView('chat')}
+            skills={skills}
+            onApproveSkill={(workspace, name) =>
+              runSkillCommand({ type: 'approve_skill', workspace, name })
+            }
+            onToggleSkill={(workspace, name, enabled) =>
+              runSkillCommand({ type: 'set_skill_enabled', workspace, name, enabled })
+            }
+            plugins={plugins}
+            onApprovePlugin={(workspace, name) =>
+              runPluginCommand({ type: 'approve_plugin', workspace, name })
+            }
+            onTogglePlugin={(workspace, name, enabled) =>
+              runPluginCommand({ type: 'set_plugin_enabled', workspace, name, enabled })
+            }
+            onReloadPlugins={() => runPluginCommand({ type: 'reload_plugins' })}
+            onReloadSkills={() => {
+              /* 逐个工作区发：命令是工作区级的，一次一个 */
+              for (const workspace of workspaces) {
+                runSkillCommand({ type: 'reload_skills', workspace: workspace.path })
+              }
+            }}
           />
         ) : (
           <>
         <main id="log" ref={logRef} onScroll={onLogScroll}>
         <div className="inner">
+          {/*
+            **空状态。**
+
+            截图暴露过这个洞：选中一个空会话时，右侧整片空白 —— 看起来像加载失败。
+            空状态要说清三件事：现在是什么状态、为什么会这样、下一步做什么。
+          */}
+          {visibleMessages.length === 0 && !hasLive ? (
+            <div className="empty">
+              <div className="empty-title">这个会话还是空的</div>
+              <div className="empty-hint">
+                在下面说点什么就能开始。工具调用、改了哪些文件、撤销入口，都会出现在这里。
+              </div>
+            </div>
+          ) : null}
           {visibleMessages.map((message, index) => (
             <Message message={message} results={toolResults} key={`${message.role}-${index}`} />
           ))}
@@ -1809,9 +2130,9 @@ export function App() {
           */}
           <div className="mode-row">
             {/*
-              这一行放**两个**会话级设置：权限模式与模型。都不加标签 ✓ ——
-              下拉框的内容是自明的，而"权限"/"模型"这种前缀在窄屏上白白占位 ✓。
-              说明走 tooltip ✓。
+              这一行放**两个**会话级设置：权限模式与模型。都不加标签 ——
+              下拉框的内容是自明的，而"权限"/"模型"这种前缀在窄屏上白白占位。
+              说明走 tooltip。
             */}
             <Dropdown
               label={MODES.find((item) => item.value === mode)?.label ?? '（读取中…）'}
@@ -1821,9 +2142,9 @@ export function App() {
             />
 
             {/*
-              模型：改的是**这个会话**（`select_model`）✓ —— 和设置页那个「修改」
-              （写 config.json、所有会话一起变）是两回事 ✓。按供应商分组，
-              一次选择就能跨供应商换模型 ✓。
+              模型：改的是**这个会话**（`select_model`） —— 和设置页那个「修改」
+              （写 config.json、所有会话一起变）是两回事。按供应商分组，
+              一次选择就能跨供应商换模型。
             */}
             <Dropdown
               label={currentModel === '' ? '（读取中…）' : currentModel}
@@ -1870,6 +2191,48 @@ export function App() {
               ? '—'
               : `${Math.round((lastUsage.cachedTokens / lastUsage.inputTokens) * 100)}%`}
           </span>
+          {/*
+            累计用量（这个会话一共）。
+
+            ⚠️ **三种状态必须分开**（这个界面反复踩的一条）：
+              · 没有数据 → `—`（不是"用了 0 token"）
+              · 有数据但端点不给缓存字段 → 缓存那格已经是 `—`
+              · 有数据 → 真实数字
+
+            **钱没显示** —— 那需要单价，而单价是用户的事：本机模型免费，
+            硬编一份过期价目表只会给出假数字。
+          */}
+          <span className="sep">·</span>
+          <span
+            title={
+              totalUsage === null
+                ? '这个会话还没拿到过引擎的用量数据 —— 那是"不知道"，不是"用了 0"'
+                : `累计 ${totalUsage.calls} 次调用：输入 ${totalUsage.inputTokens}、输出 ${totalUsage.outputTokens}`
+            }
+          >
+            累计{' '}
+            {totalUsage === null
+              ? '—'
+              : `${((totalUsage.inputTokens + totalUsage.outputTokens) / 1000).toFixed(1)}k tokens`}
+          </span>
+          {/*
+            **会话日志坏了多少条事件。**
+
+            只在非零时出现 —— 正常时它不存在，所以不占地方。
+            出现时它是"失败出来了"的证据：以前这个数被计数然后扔掉，
+            日志坏了没人知道（见 `#malformedEvents` 的注释）。
+          */}
+          {malformedEvents === 0 ? null : (
+            <>
+              <span className="sep">·</span>
+              <span
+                className="bad"
+                title="会话日志里有事件无法解析，已跳过。会话仍可用，但那几条内容丢了 —— 这一行是证据，不是噪音"
+              >
+                日志异常 {malformedEvents} 条
+              </span>
+            </>
+          )}
         </div>
       </div>
           </>

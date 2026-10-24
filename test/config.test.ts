@@ -11,7 +11,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { ConfigStore, normalizeConfig } from '../src/config/index.ts'
 import { maskResolved, modelIdentity, resolveConfig } from '../src/config/resolve.ts'
@@ -19,7 +18,6 @@ import { API_KEY_MASK, defaultConfig, maskApiKey } from '../src/config/types.ts'
 import { writeFileAtomic } from '../src/config/atomic.ts'
 import os from 'node:os'
 
-const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 
 async function withStore(fn: (store: ConfigStore, dir: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'mvs-test-'))
@@ -532,7 +530,7 @@ test('★ providers：route 必须是合法标识符', () => {
     providers: {
       GoodRoute: { baseUrl: 'http://x' },      // 大写开头 → 拒
       'has/slash': { baseUrl: 'http://x' },    // 有斜杠 → 拒
-      goodroute: { baseUrl: 'http://x' },      // ✓
+      goodroute: { baseUrl: 'http://x' },      //
     },
   })
   assert.deepEqual(Object.keys(result.config.providers ?? {}), ['goodroute'])

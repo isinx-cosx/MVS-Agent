@@ -29,12 +29,14 @@ import {
   connectSession,
   getProjection,
   getState,
+  getTransactions,
   postCommand,
   textOf,
   type ChatMessage,
   type CommandResult,
   type CommandSender,
   type HostEvent,
+  type TransactionSummary,
 } from './client.ts'
 
 export interface LiveBlock {
@@ -94,6 +96,20 @@ export interface SessionState {
    * 同时给出**原因**（计数）和**出口**（复位按钮）。
    */
   fatigue: { active: boolean; consecutiveBlocks: number; totalBlocks: number } | null
+  /** 累计用量。`null` = 还没有可信数据（与"用了 0 token"是两件事） */
+  totalUsage: { inputTokens: number; outputTokens: number; cachedTokens?: number; calls: number } | null  /**
+   * 改动记录。`null` = **还没拉过**（打开面板时才拉）——
+   * 和「这次会话没有任何改动」（空数组）是两件事。
+   */
+  transactions: TransactionSummary[] | null
+  /** 正在撤回的那一次事务 id（按钮据此显示「撤回中…」） */
+  reverting: string | null
+  /** 这个会话将要用的模型名（来自投影，不是全局配置）*/
+  model: string
+  /** 这个会话选的供应商（来自投影的 modelSelection）—— 标记选中要用它 */
+  sessionProvider: string
+  /** 日志里解析不了的事件条数（0 = 正常）*/
+  malformedEvents: number
 }
 
 const EMPTY_LIVE: LiveBlock = { reasoning: '', text: '', active: false }
@@ -137,8 +153,40 @@ export function useSession(selectedId: string | null): SessionState & {
   acknowledge: () => Promise<void>
   /** 改这个会话的权限模式（`set_mode`，**会话级**，不是进程配置） */
   setMode: (mode: string) => Promise<void>
+  /**
+   * 把**当前会话**切到某个供应商的模型。
+   *
+   * ⚠️ 它必须走和其它会话命令**同一条路**（`runCommand` → WS → 命令后重拉投影）。
+   * 之前 `App.tsx` 直接调 `postCommand` —— 于是这条命令既不走 WS、
+   * 也不经过"命令成功后重拉投影" → **切了要刷新才看得见**
+   * （用户报的就是这个，浏览器 E2E 也稳定复现了）。
+   */
+  selectModel: (provider: string, model: string) => Promise<void>
   /** 复位抗疲劳熔断器（那道单向门的出口） */
   resetFatigue: () => Promise<void>
+  /**
+   * 这个会话的改动记录（**打开面板时才拉** —— 见 `getTransactions` 的注释）。
+   *
+   * `null` = 还没拉过，和"这次会话没有任何改动"（空数组）是两件事。
+   */
+  transactions: TransactionSummary[] | null
+  /** 拉一次改动记录 */
+  loadTransactions: () => Promise<void>
+  /**
+   * 撤回一次事务（`revert { sessionId, txnId }`）。
+   *
+   * ⚠️ 它**不是**"撤销所有" —— `guard.ts` 里写着：有后台作业在跑时，
+   * 「动作前 → 动作后」这个时间窗的归属无法确定，那种粒度的回滚不该存在。
+   */
+  revert: (txnId: string) => Promise<void>
+  /** 正在撤回的那一次（按钮据此显示"撤回中…"） */
+  reverting: string | null
+  /** 这个会话将要用的模型名（来自投影，不是全局配置）*/
+  model: string
+  /** 这个会话选的供应商（来自投影的 modelSelection）—— 标记选中要用它 */
+  sessionProvider: string
+  /** 日志里解析不了的事件条数（0 = 正常）*/
+  malformedEvents: number
   /**
    * 回答一次审批请求。
    *
@@ -156,6 +204,11 @@ export function useSession(selectedId: string | null): SessionState & {
     running: false,
     interruptedTool: null,
     approval: null,
+    transactions: null,
+    reverting: null,
+    model: '',
+    sessionProvider: '',
+    malformedEvents: 0,
     error: null,
     note: null,
     status: '',
@@ -164,6 +217,7 @@ export function useSession(selectedId: string | null): SessionState & {
     contextWindowTokens: 0,
     lastUsage: null,
     fatigue: null,
+    totalUsage: null,
   })
 
   /* 会话 id 在回调里要用，但它不该触发重订阅，所以放 ref */
@@ -188,6 +242,16 @@ export function useSession(selectedId: string | null): SessionState & {
    * 回落 HTTP 不是多余的：daemon 还没重启、WS 正在重连、回执超时 —— 这些时候
    * HTTP 仍然是通的，而"命令没发出去"比"偶尔少一点流式"严重得多。
    */
+  /**
+   * `reconcile` 定义在本函数**之后**（它依赖投影拉取），而命令成功后要用它 ——
+   * 用一个 ref 把"稍后才会出现的那个函数"先接上。
+   *
+   * ⚠️ 直接调过：TS 报 `used before its declaration`，
+   * 运行时是 `Cannot access before initialization`（页面白屏 ——
+   * 被"界面出错了"横幅显示出来，也被浏览器 E2E 当场抓住）。
+   */
+  const reconcileRef = useRef<null | (() => Promise<void>)>(null)
+
   const runCommand = useCallback(
     async (command: Record<string, unknown>): Promise<CommandResult> => {
       const sender = wsCommand.current
@@ -197,12 +261,47 @@ export function useSession(selectedId: string | null): SessionState & {
           if (result.ok === false) {
             throw new Error(result.message ?? `${String(command.type)} 被拒绝`)
           }
+          /*
+           * ★ **命令成功之后重拉投影。**
+           *
+           * 浏览器 E2E 证明的根因：命令真的生效了、daemon 真的改了，
+           * 而界面刷新的是 /state —— **会话投影没重拉** →
+           * `sessionModel` 停在旧值 → 切模型看起来"点了没用"
+           *（要点一次刷新才看见）。
+           *
+           * 收在这一个出口：会话级的事实（模型、权限模式、待批准、累计用量…）
+           * 都从投影来，任何一条命令之后它都可能过期。
+           *
+           * `reconcile` 定义在后面 → 走 ref（见 `reconcileRef` 的注释）。
+           */
+          await reconcileRef.current?.()
           return result
         }
       }
       return postCommand(command)
     },
     [],
+  )
+
+  /**
+   * 切模型（会话级）。
+   *
+   * 定义在 `runCommand` 之后 —— 于是它自动继承了那条路上的一切：
+   * 优先走 WS（服务端收到就顺手订阅）、命令成功后重拉投影。
+   *
+   * ⚠️ **不在这里 catch。** 错误往上抛，由调用方（`App` 的 `switchModel`）
+   * 显示到侧栏那一行 —— 两处各写一遍错误处理，就会出现"一处显示了、一处吞了"。
+   *
+   * ⚠️ 只传 provider 与模型名，**不碰密钥**（配置里那串是掩码，
+   * 带上再写回就会把真密钥覆盖成一串点）。
+   */
+  const selectModel = useCallback(
+    async (provider: string, model: string) => {
+      const sessionId = sessionRef.current
+      if (sessionId === null || model === '') return
+      await runCommand({ type: 'select_model', sessionId, provider, model })
+    },
+    [runCommand],
   )
 
   const patch = useCallback((part: Partial<SessionState>) => {
@@ -232,7 +331,7 @@ export function useSession(selectedId: string | null): SessionState & {
          * 一个回合里模型可能调用多次（每次都是一条 `assistant/message`）。第一次
          * 调用结束后，投影里**已经有**那条助手消息了，而此刻 `running` 仍为真
          * （回合还没结束），于是 live 块**不会**被清 —— 同一段文字同时出现在
-         * "已落盘"和"正在生成"两处 ✗，等下一次 reconcile 又少掉一份 ✓。
+         * "已落盘"和"正在生成"两处，等下一次 reconcile 又少掉一份。
          * 用户看到的就是**内容一上一下地跳**。
          *
          * 判据用文本相等：这是唯一能量化"同一段内容"的东西，而且只在
@@ -260,10 +359,14 @@ export function useSession(selectedId: string | null): SessionState & {
            * 新消息进来），界面自己记一份必然会漂。界面只用它们**显示**。
            */
           mode: projection.mode ?? '',
+          model: projection.model ?? '',
+          sessionProvider: projection.modelSelection?.provider ?? '',
+          malformedEvents: projection.malformedEvents ?? 0,
           contextTokens: projection.contextTokens ?? 0,
           contextWindowTokens: projection.contextWindowTokens ?? 0,
           /* 缺省就是"不知道"（null），不用 0 冒充 —— 界面据此显示 `—` */
           lastUsage: projection.lastUsage ?? null,
+          totalUsage: projection.totalUsage ?? null,
           fatigue: projection.fatigue ?? null,
         }
       })
@@ -354,6 +457,11 @@ export function useSession(selectedId: string | null): SessionState & {
       running: false,
       interruptedTool: null,
       approval: null,
+      transactions: null,
+      reverting: null,
+      model: '',
+      sessionProvider: '',
+      malformedEvents: 0,
       error: null,
       note: null,
       status: '',
@@ -362,6 +470,7 @@ export function useSession(selectedId: string | null): SessionState & {
       contextWindowTokens: 0,
       lastUsage: null,
       fatigue: null,
+      totalUsage: null,
     })
 
     const boot = async (): Promise<void> => {
@@ -530,5 +639,63 @@ export function useSession(selectedId: string | null): SessionState & {
     [patch, reconcile, pendingApprovalId],
   )
 
-  return { ...state, send, stop, acknowledge, setMode, resetFatigue, approve }
+  /**
+   * 改动记录与撤回。
+   *
+   * 拉取是**按需**的（打开面板才调）：投影只带计数，路径只在用户真的要
+   * 看"改了哪些文件"时才值得传。
+   */
+  const loadTransactions = useCallback(async () => {
+    const sessionId = sessionRef.current
+    if (sessionId === null) return
+    try {
+      const list = await getTransactions(sessionId)
+      patch({ transactions: list })
+    } catch (err) {
+      patch({ error: err instanceof Error ? err.message : String(err) })
+    }
+  }, [patch])
+
+  const revert = useCallback(
+    async (txnId: string) => {
+      const sessionId = sessionRef.current
+      if (sessionId === null) return
+      patch({ reverting: txnId })
+      try {
+        await runCommand({ type: 'revert', sessionId, txnId })
+        /*
+         * 撤回之后**两样都要刷新**：投影（消息/事务状态变了）与改动记录
+         * （那次事务会变成"已恢复"）。少刷一样，界面就会显示一件已经不存在的事。
+         */
+        await reconcile()
+        await loadTransactions()
+      } catch (err) {
+        patch({ error: err instanceof Error ? err.message : String(err) })
+      } finally {
+        patch({ reverting: null })
+      }
+    },
+    [loadTransactions, patch, reconcile, runCommand],
+  )
+
+  /*
+   * 把 `reconcile` 接进 ref（`runCommand` 要用它，但它定义在后面）。
+   *
+   * 放在这里 —— 定义之后、返回之前 —— 是为了让"赋值"这件事在**字面上**也在
+   * 声明之后，免得又踩回 `used before its declaration`。
+   */
+  reconcileRef.current = reconcile
+
+  return {
+    ...state,
+    send,
+    stop,
+    acknowledge,
+    setMode,
+    resetFatigue,
+    approve,
+    loadTransactions,
+    revert,
+    selectModel,
+  }
 }

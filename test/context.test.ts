@@ -9,7 +9,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { compact, COMPACTION_MARKER, needsCompaction, TokenCalibration } from '../src/context/index.ts'
 import { estimateConversationTokens, estimateTokens } from '../src/context/tokens.ts'
@@ -26,7 +25,6 @@ import { createDefaultRegistry } from '../src/tools/index.ts'
 import type { Message, ModelClient, ModelEvent } from '../src/model/types.ts'
 import os from 'node:os'
 
-const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 
 const big = (chars: number, fill = 'x'): string => fill.repeat(chars)
 

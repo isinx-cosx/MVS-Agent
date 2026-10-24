@@ -16,7 +16,7 @@ for (;;) {
   try {
     status = await (await fetch('http://127.0.0.1:3092/local-model')).json()
   } catch (err) {
-    console.log(`  ✗ 问不到守护进程：${err.message}`)
+    console.log(` 问不到守护进程：${err.message}`)
     process.exit(1)
   }
 

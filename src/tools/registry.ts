@@ -6,6 +6,7 @@
  */
 
 import type { ToolSchema } from '../model/types.ts'
+import { PLUGIN_PREFIX } from '../plugins/types.ts'
 import { validate } from './schema.ts'
 import {
   failResult,
@@ -32,6 +33,24 @@ export class ToolRegistry {
 
   get(name: string): AnyTool | undefined {
     return this.#tools.get(name)
+  }
+
+  /**
+   * 换掉所有插件工具。
+   *
+   * 插件工具的名字都以 `plugin__` 开头，所以识别很干净；先删再注册，
+   * 同名覆盖是**刻意**的 —— 插件升级后工具实现必须换新，这一点和
+   * `register`（重名就抛）语义不同。
+   *
+   * 为什么是「换一批」而不是「逐个注册」：插件被卸载或禁用之后，
+   * 它的工具必须**从注册表里消失**，否则模型还会看到它、还会去调。
+   */
+  replacePluginTools(tools: AnyTool[]): this {
+    for (const name of [...this.#tools.keys()]) {
+      if (name.startsWith(PLUGIN_PREFIX)) this.#tools.delete(name)
+    }
+    for (const tool of tools) this.#tools.set(tool.name, tool)
+    return this
   }
 
   list(): AnyTool[] {

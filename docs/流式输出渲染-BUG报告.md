@@ -158,7 +158,7 @@ attempt 带的是 1 ⇒ 客户端的 `attemptForSettlement` 要求两者**逐字
 **根因（协议级的顺序约束）。** 客户端给在线帧算的合成 seq 是
 `durableCursor + 1 − 1/(n+1)`，而 `durableCursor` 在**收到**落盘条目的那一刻就前进
 （哪怕那条消息还在等 `end` 帧结算）。于是"先投落盘消息、再冲在线尾巴"的顺序下，
-尾巴的 seq 变成 `3.5` ✓，紧接着落盘那条 `seq=3` 来装配时反而被判成**不递增** ⇒
+尾巴的 seq 变成 `3.5`，紧接着落盘那条 `seq=3` 来装配时反而被判成**不递增** ⇒
 订阅者抛错 ⇒ **那一趟通知整个断掉**，界面上的文字被撤掉。
 
 **修复。** 顺序钉死为 **tail → assistant/message → end 帧**：新增
@@ -247,8 +247,8 @@ attempt 带的是 1 ⇒ 客户端的 `attemptForSettlement` 要求两者**逐字
    重新取一次，而不是沿用建 attempt 时定的那个。（`startedAfterSeq` 不动 —— 取更小的
    值只会更安全。）
 
-**验证（修后）。** `在线帧的turnStep = ["start/1:1", "chunk/1:1", "end/1:1"]` ✓、
-`开步记录 = ["open@1:1"]` ✓、**两条绊线都不响** ✓、可达回合结束且正文在 ✓。
+**验证（修后）。** `在线帧的turnStep = ["start/1:1", "chunk/1:1", "end/1:1"]`、
+`开步记录 = ["open@1:1"]`、**两条绊线都不响**、可达回合结束且正文在。
 
 ---
 
@@ -283,7 +283,7 @@ attempt **不给基线**，让随后的 `start` 帧顺理成章被接受。
 
 **证据。** 修前中途加入的探针里 `快照次数 = 2`（= 重建过一次），且在线行始终没有正文；
 修后快照仍是 2（客户端本来就会重开一次流），但帧的顺序变成
-`snapshot → step/start → start → block-start → text-delta` ✓。
+`snapshot → step/start → start → block-start → text-delta`。
 
 ---
 
@@ -343,11 +343,11 @@ attempt **不给基线**，让随后的 `start` 帧顺理成章被接受。
 
 | # | 探针 | 判据 | 结果 |
 |---|---|---|---|
-| 1 | `probe-verify.js` | 回合结束前就有字 + 收尾后还在 + 事件序列干净 | ✓ |
-| 2 | `probe-tool.js` | 两个 step、`tool/result` 落在**自己那一步**、最终答复 | ✓ |
-| 3 | `probe-two-turns.js` | 跨回合编号 `@1:2 → @2:1`，不串台 | ✓ |
-| 4 | `probe-reasoning.js` | 两个块（`reasoning#0 → text#12`）、两类 delta 各落各的 | ✓ |
-| 5 | `probe-join.js` | 中途加入：号 = `1:1`、绊线不响、状态闸门开 | ✓（文字开头段：见 B11） |
+| 1 | `probe-verify.js` | 回合结束前就有字 + 收尾后还在 + 事件序列干净 | |
+| 2 | `probe-tool.js` | 两个 step、`tool/result` 落在**自己那一步**、最终答复 | |
+| 3 | `probe-two-turns.js` | 跨回合编号 `@1:2 → @2:1`，不串台 | |
+| 4 | `probe-reasoning.js` | 两个块（`reasoning#0 → text#12`）、两类 delta 各落各的 | |
+| 5 | `probe-join.js` | 中途加入：号 = `1:1`、绊线不响、状态闸门开 |（文字开头段：见 B11） |
 
 复跑方式见 `.repro/README.md`（含两个必须知道的坑：探针采样不能用 `sleep()` 驱动；
 `MVS_HOME` 必须配 `MVS_RECOVERY_DIR`）。

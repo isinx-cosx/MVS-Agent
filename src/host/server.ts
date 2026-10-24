@@ -16,13 +16,11 @@
  * 只检查「是不是来自本地」是不够的，必须检查 `Host` 本身。
  */
 
-import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { timingSafeEqual } from 'node:crypto'
 import { readFile, mkdir, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import path from 'node:path'
 import type { Duplex } from 'node:stream'
-import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { ClientCommand, Envelope, ServerFrame } from '../protocol/types.ts'
 import { EPHEMERAL_EVENTS } from '../protocol/types.ts'
@@ -31,7 +29,7 @@ import { EPHEMERAL_EVENTS } from '../protocol/types.ts'
  * 每条连接最多记多少个"关注中的会话"。
  *
  * `watch` 现在是**只增不减**（见那条命令的处理）—— 那是为了不让任何一个包误伤
- * 别的会话的增量订阅 ✓。代价是集合会一直长，所以给个上限，超了淘汰最早加的。
+ * 别的会话的增量订阅。代价是集合会一直长，所以给个上限，超了淘汰最早加的。
  */
 const WATCH_LIMIT = 64
 import type { Runtime } from './runtime.ts'
@@ -80,8 +78,8 @@ const PUBLIC_STATIC_PREFIXES = ['/brand']
  * 它唯一「生成」的时刻是**首次从 DSH 抓那一份 DOM**，而那件事很少发生。
  * 抓完就提交，从此它是我们的文件，由我们手改。
  *
- * `web/app/` 和 `web/brand/` 仍然是工具生成的（一个是要跑 DSH 前端的实验，
- * 一个是 logo 对照页），它们有各自的前缀，互不影响。
+ * `web/brand/` 是工具生成的 logo 对照页（`tools/logo-sheet.mjs`）；
+ * 原来的 `web/app/`（DSH 前端实验页）已归档到 `_attic/`。
  */
 const UI_DIR = fileURLToPath(new URL('../../web/', import.meta.url))
 /**
@@ -220,7 +218,7 @@ function cachePolicyFor(filename: string, type: string): string {
    *
    * 契约写在这里，测试也守着它（`test/server.test.ts` 的"名字固定的 JS 不能长缓存"）。
    * 含义是：**每次用之前都必须回源校验** —— 而这条策略不发 ETag / Last-Modified，
-   * 于是校验退化成一次完整 GET ✓。对本地小文件来说这已经够强了。
+   * 于是校验退化成一次完整 GET。对本地小文件来说这已经够强了。
    *
    * ⚠️ **不要改成 `no-store` 或 `immutable`。**
    * 前者是多此一举（`no-cache` 已经保证回源），后者是这里出过的事故：
@@ -417,8 +415,25 @@ export class HostServer {
      * 这条 DSH 有（`isTrustedApiRequest` 里那句 `=== "cross-site"`），我原来漏了。
      * 它比令牌更准：令牌是「谁拿到都能用」，而这是对**这一次请求的实际来源**的断言。
      * 所以哪怕关掉了令牌，这一条也留着。
+     *
+     * ## ⚠️ 但它**不该管顶层导航**
+     *
+     * 用户刷新自己的应用时，浏览器可能把这次导航标成 `cross-site`（我实测过一次：
+     * 页面先前停在"连接被拒"的错误页上，之后按 F5，请求就带着 `cross-site` 来了）。
+     * 于是**主人被自己的围栏挡在门外**，看到的是一行
+     * `{"error":"跨站请求不被允许"}` —— 既不知道发生了什么，也不知道怎么办。
+     *
+     * 而挡它**买不到任何安全**：
+     *   · 跨站的顶层 `GET /` **读不到响应**（同源策略）
+     *   · 它**改不了任何状态**（能改状态的 `/command` 是 POST，不可能是一次导航）
+     *
+     * 所以判据收窄成：**只要这次请求是一次"文档导航"（`Sec-Fetch-Mode: navigate`
+     * 且方法是 GET），就放它过去**。API 面（POST 以及所有 XHR/fetch）**照旧全挡** ——
+     * 那条缝该守的是 `/command` 这类通道，不是用户自己打开首页的那一下。
      */
-    if (req.headers['sec-fetch-site'] === 'cross-site') {
+    const isDocumentNavigation =
+      req.headers['sec-fetch-mode'] === 'navigate' && (req.method === 'GET' || req.method === 'HEAD')
+    if (!isDocumentNavigation && req.headers['sec-fetch-site'] === 'cross-site') {
       return { status: 403, message: '跨站请求不被允许' }
     }
 
@@ -655,7 +670,14 @@ export class HostServer {
         sendJson(res, 400, { error: '缺少 sessionId' })
         return
       }
-      const transactions = await this.#runtime.listTransactions(sessionId)
+      /*
+       * ★ **这里要带路径。**
+       *
+       * 这个端点存在的理由就是"用户打开了撤销菜单"（见上面那段注释）——
+       * 而撤销菜单要回答的第一个问题不是"改了几个文件"，是**"改了哪几个"**。
+       * 投影那边仍然只带计数（它每次变化都整份推，背不动路径数组）。
+       */
+      const transactions = await this.#runtime.listTransactions(sessionId, true)
       if (transactions === undefined) {
         sendJson(res, 404, { error: `未知会话：${sessionId}` })
         return
@@ -910,10 +932,10 @@ export class HostServer {
       /*
        * 生成参数。⚠️ **`null` 必须能穿过去** —— 它是"显式地不要这个值了"，
        * 而 `undefined` 是"这次不改它"。混掉的话界面就没有办法把温度清回"由引擎决定"，
-       * 只能改大改小 ✗。
+       * 只能改大改小。
        *
        * 越界的数**在这里不做判断**，交给 `updateModel` 统一拒（那里能回一句人话）；
-       * 这里只保证"是有限数"而不是 `NaN`/字符串 ✓。
+       * 这里只保证"是有限数"而不是 `NaN`/字符串。
        */
       for (const key of ['temperature', 'maxTokens'] as const) {
         const value = body[key]
@@ -954,7 +976,7 @@ export class HostServer {
        * `route`：**只定位要改哪个供应商，不切换当前用的**。
        *
        * 设置页做成卡片之后，"修改"一个没在用的供应商如果走 `activeProvider`，
-       * 就会把它切成当前 ✗ —— 用户只想改个地址。这个字段让两件事分得开。
+       * 就会把它切成当前 —— 用户只想改个地址。这个字段让两件事分得开。
        */
       if (typeof body.route === 'string') patch.route = body.route
 
@@ -1248,6 +1270,56 @@ export class HostServer {
         return ok ? { ok: true } : { ok: false, message: `未知会话：${command.sessionId}` }
       }
 
+      /*
+       * ── 技能（工作区级） ──────────────────────────────────────────────
+       *
+       * 三条都只做**人**会做的事。模型侧只有 `search_skills` / `use_skill`
+       * 两个只读工具，拿不到确认与停用的入口 —— 这是整条提权链的断点：
+       * 模型能写技能文件（经人确认一次），但它不能自己批准它。
+       */
+      case 'reload_skills': {
+        const ok = await this.#runtime.reloadSkills(command.workspace)
+        return ok ? { ok: true } : { ok: false, message: `未知工作区：${command.workspace}` }
+      }
+
+      case 'approve_skill': {
+        return await this.#runtime.approveSkill(command.workspace, command.name)
+      }
+
+      case 'set_skill_enabled': {
+        return await this.#runtime.setSkillEnabled(
+          command.workspace,
+          command.name,
+          command.enabled,
+        )
+      }
+
+      /*
+       * ── 插件 ──────────────────────────────────────────────────────────
+       *
+       * 和技能一样：三条都是人的动作。模型只能调插件**带来的工具**，
+       * 不能自己确认清单、也不能自己打开某个工作区的启用开关 ——
+       * 否则"确认一次清单哈希"这道门形同虚设。
+       */
+      case 'reload_plugins': {
+        const ok = await this.#runtime.reloadPlugins(
+          command.workspace === undefined ? undefined : command.workspace,
+        )
+        return ok ? { ok: true } : { ok: false, message: '没有可重扫的工作区' }
+      }
+
+      case 'approve_plugin': {
+        return await this.#runtime.approvePlugin(command.workspace, command.name)
+      }
+
+      case 'set_plugin_enabled': {
+        return await this.#runtime.setPluginEnabled(
+          command.workspace,
+          command.name,
+          command.enabled,
+        )
+      }
+
       default:
         return { ok: false, message: '未知命令' }
     }
@@ -1335,18 +1407,18 @@ export class HostServer {
      *   1. 打开会话 → 发消息（`user_message`）
      *   2. 界面的订阅包（`watch`）什么时候到，取决于它自己的渲染与抖动
      *
-     * 于是**第一轮几乎必然**发生在"这个会话还没进订阅集合"的窗口里 ✗ ——
-     * 那一轮的增量被整段丢掉，界面只能等落盘消息**整段蹦出来** ✓；
-     * 等第一轮之后订阅补上了 ✓，**后面几轮就正常流式**了 ✓✓
+     * 于是**第一轮几乎必然**发生在"这个会话还没进订阅集合"的窗口里 ——
+     * 那一轮的增量被整段丢掉，界面只能等落盘消息**整段蹦出来**；
+     * 等第一轮之后订阅补上了，**后面几轮就正常流式**了
      *
-     * 实测复现（用户）：本地模型每轮都不流 ✗；切到 API 后**第一轮不流、后面都流** ✓✗
-     * —— 正是这个形状 ✓
+     * 实测复现（用户）：本地模型每轮都不流；切到 API 后**第一轮不流、后面都流**
+     * —— 正是这个形状
      *
      * ## 为什么修在这里而不是界面
      *
-     * "记得早点订阅"是**界面侧的时序约束** ✗，任何一次重渲染/抖动都可能破坏它 ✓。
-     * 而"给谁发消息就是在关注谁"是**天然成立的事实** ✓ —— 由服务端直接落实，
-     * 竞态从根上不存在 ✓。
+     * "记得早点订阅"是**界面侧的时序约束**，任何一次重渲染/抖动都可能破坏它。
+     * 而"给谁发消息就是在关注谁"是**天然成立的事实** —— 由服务端直接落实，
+     * 竞态从根上不存在。
      */
     const sessionIdOfCommand = (command as { sessionId?: unknown }).sessionId
     if (typeof sessionIdOfCommand === 'string' && sessionIdOfCommand !== '') {
@@ -1378,21 +1450,21 @@ export class HostServer {
        *     if (EPHEMERAL_EVENTS.has(type) && !watched.has(sessionId)) continue
        *
        * 于是只要有一个 `watch` 包没带某个会话（界面里这很常见：侧栏每个会话的
-       * 预览都会加/减订阅 ✓），**那个会话的增量就被整段过滤掉** ✗ ——
-       * 现象是「普通事件照常、逐 token 一条都没有、生成完整段蹦出来」✓
+       * 预览都会加/减订阅），**那个会话的增量就被整段过滤掉** ——
+       * 现象是「普通事件照常、逐 token 一条都没有、生成完整段蹦出来」
        *
-       * 实测证据：修好广播那处之后，`turn_started`/`step_started` 到了 ✓，
-       * 但 `model_reasoning_delta` / `model_text_delta` **一条都没到** ✗
-       * —— 因为它们是被这道过滤挡住的 ✓
+       * 实测证据：修好广播那处之后，`turn_started`/`step_started` 到了，
+       * 但 `model_reasoning_delta` / `model_text_delta` **一条都没到**
+       * —— 因为它们是被这道过滤挡住的
        *
        * ## 现在
        *
-       * 只加不减：包里的会话照加，**没带的不动** ✓。任何一个包都不可能再误伤
-       * 别的会话 ✓。
+       * 只加不减：包里的会话照加，**没带的不动**。任何一个包都不可能再误伤
+       * 别的会话。
        *
-       * ⚠️ 代价与边界：客户端不再显式退订，所以这个集合会一直长 ✗。
+       * ⚠️ 代价与边界：客户端不再显式退订，所以这个集合会一直长。
        * 本地应用里可接受，但仍然**给个上限**（`WATCH_LIMIT`），超了淘汰最早加的
-       * —— 否则长时间开着、点过几百个会话之后，每个 token 都会推给一堆没人看的会话 ✗。
+       * —— 否则长时间开着、点过几百个会话之后，每个 token 都会推给一堆没人看的会话。
        */
       for (const sessionId of command.sessionIds) {
         if (watched.has(sessionId)) continue
@@ -1468,7 +1540,7 @@ export class HostServer {
        * 订阅是客户端**另外**发 `watch` 声明的，而发消息走的是 `POST /command`
        * —— 两条路径**没有任何绑定关系**。于是可能出现：
        *
-       *   · 界面打开会话、发消息，但 `watch` 还没送到 → 增量到达时被滤掉 ✗
+       *   · 界面打开会话、发消息，但 `watch` 还没送到 → 增量到达时被滤掉
        *   · 表现很具体：**某一轮整段不流式**，下一轮又好了（订阅补上了）
        *
        * 实测形状就是"本地模型每轮都不流 / 切到 API 后第一轮不流、后面就流"。
@@ -1491,15 +1563,15 @@ export class HostServer {
       /*
        * ★★ **一个坏掉的连接不能饿死后面所有人。**
        *
-       * `client.send()` 在**已关闭**的 socket 上会抛异常 ✗ —— 而这里原来没有
-       * try/catch，于是那个异常从 `#broadcast` 里冒出去，**整个循环当场中断** ✗，
-       * 排在它后面的客户端**一条都收不到** ✓
+       * `client.send()` 在**已关闭**的 socket 上会抛异常 —— 而这里原来没有
+       * try/catch，于是那个异常从 `#broadcast` 里冒出去，**整个循环当场中断**，
+       * 排在它后面的客户端**一条都收不到**
        *
-       * 实测证据：修好之前 WS 上**一条 `event` 都没有** ✗（只有 `state` 和
-       * `projection` ✓ —— 而 `projection` 是 watch 处理里**直接** `#send` 的，
-       * 根本不走广播 ✓）。修好之后 `turn_started` / `step_started` 立刻到了 ✓。
+       * 实测证据：修好之前 WS 上**一条 `event` 都没有**（只有 `state` 和
+       * `projection` —— 而 `projection` 是 watch 处理里**直接** `#send` 的，
+       * 根本不走广播）。修好之后 `turn_started` / `step_started` 立刻到了。
        *
-       * 所以：**捕住异常并把这个客户端摘掉** ✓（连接已经坏了，留着只会一直饿死别人）。
+       * 所以：**捕住异常并把这个客户端摘掉**（连接已经坏了，留着只会一直饿死别人）。
        */
       try {
         client.send(text)

@@ -13,7 +13,6 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { mkdtemp, mkdir, rm, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { HostServer, Runtime } from '../src/host/index.ts'
 import type { PickResult } from '../src/host/index.ts'
@@ -24,7 +23,6 @@ import type { ServerFrame } from '../src/protocol/types.ts'
 import type { PermissionMode } from '../src/policy/types.ts'
 import os from 'node:os'
 
-const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 
 // ---------------------------------------------------------------------------
 
@@ -259,7 +257,7 @@ test('只绑回环：打印出来的地址必须是 127.0.0.1', async () => {
 })
 
 test('防护①：Host 不是回环 → 403（挡 DNS rebinding）', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, token, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port, token }) => {
     // 攻击场景：恶意域名解析到 127.0.0.1，浏览器带着攻击者的域名发请求。
     // 请求确实落在回环上，但 Host 头是攻击者的域名。
     const denied = await raw(port, { host: 'evil.example.com', token })
@@ -273,7 +271,7 @@ test('防护①：Host 不是回环 → 403（挡 DNS rebinding）', async () =>
 })
 
 test('防护②：Origin 不是回环 → 403', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, token, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port, token }) => {
     const denied = await raw(port, {
       host: `127.0.0.1:${port}`,
       origin: 'https://evil.example.com',
@@ -295,14 +293,14 @@ test('防护②：Origin 不是回环 → 403', async () => {
 })
 
 test('防护③：没有令牌 → 401', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port }) => {
     const denied = await raw(port, { host: `127.0.0.1:${port}` })
     assert.equal(denied.status, 401, `实际 ${denied.status}：${denied.body}`)
   })
 })
 
 test('防护③：令牌错误 → 401，长度不同也不会崩', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port }) => {
     const wrong = await raw(port, { host: `127.0.0.1:${port}`, token: 'wrong-token' })
     assert.equal(wrong.status, 401)
 
@@ -313,7 +311,7 @@ test('防护③：令牌错误 → 401，长度不同也不会崩', async () => 
 })
 
 test('防护③：查询串里的令牌也接受（浏览器无法给 WS 设请求头）', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, token, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port, token }) => {
     const res = await raw(port, { host: `127.0.0.1:${port}`, path: `/health?token=${token}` })
     assert.equal(res.status, 200)
   })
@@ -328,7 +326,7 @@ test('防护③：查询串里的令牌也接受（浏览器无法给 WS 设请�
 // ---------------------------------------------------------------------------
 
 test('/auth?next= 一次导航完成换令牌与跳转', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, token, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port, token }) => {
     const res = await raw(port, { path: `/auth?token=${token}&next=/brand/` })
     assert.equal(res.status, 302, `实际 ${res.status}：${res.body}`)
     assert.equal(res.headers.location, '/brand/')
@@ -338,7 +336,7 @@ test('/auth?next= 一次导航完成换令牌与跳转', async () => {
 })
 
 test('/auth?next= 拒绝站外地址（否则就是开放重定向）', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, token, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port, token }) => {
     /*
      * `//evil.example.com` 是**协议相对 URL** —— 浏览器会把它当成外部站点。
      * 只判 `startsWith('/')` 会放它过去，所以必须连这个也挡掉。
@@ -352,7 +350,7 @@ test('/auth?next= 拒绝站外地址（否则就是开放重定向）', async ()
 })
 
 test('不带 next 的 /auth 仍然是 204（老行为不能变）', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, token, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port, token }) => {
     const res = await raw(port, { path: `/auth?token=${token}` })
     assert.equal(res.status, 204)
     assert.equal(res.headers.location, undefined)
@@ -373,7 +371,7 @@ test('不带 next 的 /auth 仍然是 204（老行为不能变）', async () => 
 // ---------------------------------------------------------------------------
 
 test('浏览器导航遇 401 → 给人看的说明页，而不是一句 JSON', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, token, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port, token }) => {
     const browse = await raw(port, {
       path: '/dev',
       headers: { accept: 'text/html,application/xhtml+xml' },
@@ -394,7 +392,7 @@ test('浏览器导航遇 401 → 给人看的说明页，而不是一句 JSON', 
 })
 
 test('API 调用遇 401 仍然是 JSON', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port }) => {
     const api = await raw(port, { path: '/state', headers: { accept: 'application/json' } })
     assert.equal(api.status, 401)
     assert.match(String(api.headers['content-type']), /application\/json/)
@@ -403,7 +401,7 @@ test('API 调用遇 401 仍然是 JSON', async () => {
 })
 
 test('没有 Accept 头时按 API 处理（不能默认给 HTML）', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port }) => {
     const bare = await raw(port, { path: '/state' })
     assert.equal(bare.status, 401)
     assert.match(String(bare.headers['content-type']), /application\/json/)
@@ -423,7 +421,7 @@ test('没有 Accept 头时按 API 处理（不能默认给 HTML）', async () =>
 // ---------------------------------------------------------------------------
 
 test('★ 公开静态页：/brand/ 不带令牌也能开', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port }) => {
     for (const path of ['/brand/']) {
       const res = await raw(port, { path, headers: { accept: 'text/html' } })
       assert.equal(res.status, 200, `${path} 应当公开，实际 ${res.status}：${res.body.slice(0, 80)}`)
@@ -433,7 +431,7 @@ test('★ 公开静态页：/brand/ 不带令牌也能开', async () => {
 })
 
 test('★ 公开静态页仍然过 Host 围栏（公开 ≠ 放开鉴权）', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port }) => {
     // 伪造 Host 是 DNS rebinding 的特征 —— 公开页也不能放过它
     const rebound = await raw(port, { path: '/brand/', host: 'evil.example.com' })
     assert.equal(rebound.status, 403, 'Host 不是回环时，公开页也必须拒绝')
@@ -441,7 +439,7 @@ test('★ 公开静态页仍然过 Host 围栏（公开 ≠ 放开鉴权）', as
 })
 
 test('★ 公开静态页仍然过 Origin 围栏', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port }) => {
     const crossSite = await raw(port, {
       path: '/brand/',
       host: `127.0.0.1:${port}`,
@@ -452,7 +450,7 @@ test('★ 公开静态页仍然过 Origin 围栏', async () => {
 })
 
 test('★ 公开的是那两个前缀加根路径，不是整个静态目录', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port }) => {
     /*
      * 这条是护栏：`/brand/` 公开，但 **API、开发页、以及主页面本身都不能跟着公开**。
      * 一个不小心把前缀写成 `/`，这条会立刻红。
@@ -482,7 +480,7 @@ test('★ 公开的是那两个前缀加根路径，不是整个静态目录', a
 test('★ 不要令牌：页面和 API 都能直接访问', async () => {
   await withServer(
     scriptedModel([say('x')]),
-    async ({ port, sessionId }) => {
+    async ({ port }) => {
       for (const path of ['/', '/state', '/dev', '/brand/', '/glue.js']) {
         const res = await raw(port, { path, host: `127.0.0.1:${port}` })
         assert.equal(res.status, 200, `${path} 在不要令牌时应当可访问，实际 ${res.status}`)
@@ -495,7 +493,7 @@ test('★ 不要令牌：页面和 API 都能直接访问', async () => {
 test('★ 不要令牌：伪造 Host 仍然 403（DNS rebinding）', async () => {
   await withServer(
     scriptedModel([say('x')]),
-    async ({ port, sessionId }) => {
+    async ({ port }) => {
       const res = await raw(port, { path: '/state', host: 'evil.example.com' })
       assert.equal(res.status, 403, '关令牌不能连 Host 围栏一起关')
     },
@@ -588,7 +586,7 @@ test('★ 不要令牌：Sec-Fetch-Site=cross-site 仍然 403（这条是 Origin
 test('★ 不要令牌：同源请求正常放行（围栏不能误伤）', async () => {
   await withServer(
     scriptedModel([say('x')]),
-    async ({ port, sessionId }) => {
+    async ({ port }) => {
       const res = await raw(port, {
         path: '/state',
         host: `127.0.0.1:${port}`,
@@ -601,7 +599,7 @@ test('★ 不要令牌：同源请求正常放行（围栏不能误伤）', asyn
 })
 
 test('★ 要令牌时 Sec-Fetch-Site 那道同样生效（不是只在关令牌时才管用）', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, token, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port, token }) => {
     const res = await raw(port, {
       path: '/state',
       host: `127.0.0.1:${port}`,
@@ -629,7 +627,7 @@ test('★ 根路径 / 必须带令牌 —— 它是加载了逻辑层的主页�
    * 那条规则存在的前提是「同一份内容在另一个 URL 上也能拿到」——
    * 那个 URL（`/dsh/`）已经没有了，前提也就不成立。
    */
-  await withServer(scriptedModel([say('x')]), async ({ port, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port }) => {
     const res = await raw(port, { path: '/', headers: { accept: 'text/html' } })
     assert.equal(res.status, 401, `主页面会调 API，必须带令牌。实际 ${res.status}`)
   })
@@ -644,7 +642,7 @@ test('主页面带令牌时正常打开（它就是 index.html）', async () => 
 })
 
 test('防护①：WebSocket 升级请求同样过鉴权', async () => {
-  await withServer(scriptedModel([say('x')]), async ({ port, token, sessionId }) => {
+  await withServer(scriptedModel([say('x')]), async ({ port, token }) => {
     // 这是最容易漏的一道门：很多人只给 HTTP 路由加了鉴权，忘了 upgrade
     const denied = await raw(port, {
       method: 'GET',

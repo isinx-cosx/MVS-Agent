@@ -56,7 +56,7 @@ for (const root of CANDIDATES) {
 console.log('  ── 实际 import 一次，看它自己从哪加载')
 try {
   const koffi = (await import('file:///C:/Program Files/DSH NEXT/resources/app/node_modules/koffi/index.cjs')).default
-  console.log(`    ✓ koffi ${koffi.version ?? '?'}   sizeof(void*) = ${koffi.sizeof('void *')}`)
+  console.log(`   koffi ${koffi.version ?? '?'}   sizeof(void*) = ${koffi.sizeof('void *')}`)
   console.log(`    load('user32.dll') 可不可以：`, (() => {
     try {
       koffi.load('user32.dll')
@@ -66,5 +66,5 @@ try {
     }
   })())
 } catch (err) {
-  console.log(`    ✗ ${err.message}`)
+  console.log(`   ${err.message}`)
 }

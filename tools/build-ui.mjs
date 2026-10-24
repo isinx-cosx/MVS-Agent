@@ -45,20 +45,20 @@ mkdirSync(OUT, { recursive: true })
  *
  * ## 为什么默认改成生产版
  *
- * 原来固定 `development` + `minify: false` ✓，注释里的理由很实在：React 开发版会
+ * 原来固定 `development` + `minify: false`，注释里的理由很实在：React 开发版会
  * 报出可读的警告（hooks 依赖写错、key 重复），而这是个本地应用。但代价实测出来是：
  *
  *     JS   2,242 KB  →  773 KB       （production + minify，省 66%）
  *     CSS     49 KB  →   41 KB
  *
- * 也就是**每次加载多搬 1.5 MB**，而且产物里带着 `react-dom.development` ✓。
+ * 也就是**每次加载多搬 1.5 MB**，而且产物里带着 `react-dom.development`。
  * 这两件事都该由"你在干什么"决定，而不是写死：
  *
  *   npm run ui:build        生产版（默认）—— 快，sourcemap 仍在，报错仍能映射回源码
  *   npm run ui:build:dev    开发版 —— 拿回 React 的可读警告
  *
- * ⚠️ 生产版并不是"不能调试"：`sourcemap: true` 一直开着 ✓，所以栈轨迹照样指到
- * 源码行 ✓。丢掉的是 React 自己那几句警告（生产包里只剩 `Minified React error #xxx`
+ * ⚠️ 生产版并不是"不能调试"：`sourcemap: true` 一直开着，所以栈轨迹照样指到
+ * 源码行。丢掉的是 React 自己那几句警告（生产包里只剩 `Minified React error #xxx`
  * 加一个链接）。**要那些警告时就用 `ui:build:dev`。**
  */
 const dev = process.argv.includes('--dev')

@@ -21,7 +21,14 @@
  */
 
 import { useState } from 'react'
-import type { ConfigSummary, PickerCapability } from './client.ts'
+import type {
+  ConfigSummary,
+  PickerCapability,
+  PluginStatus,
+  PluginSummary,
+  SkillStatus,
+  SkillSummary,
+} from './client.ts'
 import type { FollowMode, ImagePolicy, Settings, ThemeChoice } from './settings.ts'
 import { FONT_SIZE_RANGE } from './settings.ts'
 
@@ -54,6 +61,34 @@ interface SettingsProps {
   cleaning: boolean
   cleanupNote: string | null
   onClose: () => void
+  /* ── 技能（工作区级，且都是**人**的动作） ── */
+  skills: SkillSummary[]
+  /** 确认一份技能（记下当前正文哈希）。模型没有这个能力 —— 这是那条提权链的断点 */
+  onApproveSkill: (workspace: string, name: string) => void
+  onToggleSkill: (workspace: string, name: string, enabled: boolean) => void
+  /** 重新扫描当前工作区的技能目录 */
+  onReloadSkills: () => void
+  /* ── 插件（安装全局、启用按工作区，同样是人的动作） ── */
+  plugins: PluginSummary[]
+  onApprovePlugin: (workspace: string, name: string) => void
+  onTogglePlugin: (workspace: string, name: string, enabled: boolean) => void
+  onReloadPlugins: () => void
+}
+
+/** 插件状态：和技能一样是四选一 */
+const PLUGIN_STATUS_LABEL: Record<PluginStatus, string> = {
+  enabled: '已启用',
+  disabled: '已停用',
+  pending: '待确认',
+  broken: '清单有误',
+}
+
+/** 技能状态的显示文字。四个状态互斥，见 `SkillSummary` 的注释 */
+const SKILL_STATUS_LABEL: Record<SkillStatus, string> = {
+  approved: '可用',
+  pending: '待确认',
+  disabled: '已停用',
+  broken: '加载失败',
 }
 
 /** 一行设置：左边说明，右边控件 */
@@ -139,13 +174,13 @@ function Info({ label, value, hint }: { label: string; value: string; hint?: str
  * ## 字段语义（用户定的规则）
  *
  *   留空 = **不发这个字段** = 保持原值 —— 第一次配置时"原值"就是没有，
- *          所以同一条规则同时覆盖了"首次"和"后续"两种情况 ✓
- *   要清掉已经设过的值 → 点那一项右边的 `×`（显式动作，发 `null`）✓
+ *          所以同一条规则同时覆盖了"首次"和"后续"两种情况
+ *   要清掉已经设过的值 → 点那一项右边的 `×`（显式动作，发 `null`）
  *
  * ## 密钥：只出不进
  *
- * 框里放的是**掩码**（`sk-…7dae`）当 placeholder ✓，用户不输入就不发这个字段 ✓。
- * 真密钥永远不会出现在页面上，也不可能被回写 ✓ —— 配置层有测试守这条。
+ * 框里放的是**掩码**（`sk-…7dae`）当 placeholder，用户不输入就不发这个字段。
+ * 真密钥永远不会出现在页面上，也不可能被回写 —— 配置层有测试守这条。
  */
 function ModelForm({
   config,
@@ -164,7 +199,7 @@ function ModelForm({
   const view = config?.model
   const provider = route === '' ? undefined : config?.providers?.[route]
 
-  /* 五个输入框的草稿。用受控 state，这样"×"清空和用户手输是同一条路 ✓ */
+  /* 五个输入框的草稿。用受控 state，这样"×"清空和用户手输是同一条路 */
   const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('')
   const [temperature, setTemperature] = useState('')
@@ -194,7 +229,7 @@ function ModelForm({
         return
       }
       const value = raw.trim()
-      /* ⚠️ 留空 = **不发** —— 不是"发空串"。空串在 apiKey 上是"清掉"的意思 ✗ */
+      /* ⚠️ 留空 = **不发** —— 不是"发空串"。空串在 apiKey 上是"清掉"的意思 */
       if (value === '') return
       patch[key] = value
     }
@@ -204,16 +239,16 @@ function ModelForm({
     put('maxTokens', maxTokens === '' ? '' : String(Number(maxTokens)))
     /*
      * 密钥单独处理：**框里永远是空的**（掩码只在 placeholder 里），所以
-     * "非空才发"这一条就够了 —— 用户没输入就一个字都不发 ✓。
+     * "非空才发"这一条就够了 —— 用户没输入就一个字都不发。
      */
     if (apiKey.trim() !== '') patch['apiKey'] = apiKey.trim()
 
     /*
      * ⚠️ **用 `route` 定位，不要用 `activeProvider`。**
      *
-     * 后者会顺手把"当前用的是谁"也切成它 ✗ —— 用户只是想改一个没在用的供应商的
-     * 地址，结果正在用的模型被换掉了，而且界面上看不出来 ✓。两个职责分开了：
-     * `route` 定位 ✓，`activeProvider` 切换 ✓（这里一个字都不提它 ✓）。
+     * 后者会顺手把"当前用的是谁"也切成它 —— 用户只是想改一个没在用的供应商的
+     * 地址，结果正在用的模型被换掉了，而且界面上看不出来。两个职责分开了：
+     * `route` 定位，`activeProvider` 切换（这里一个字都不提它）。
      */
     patch['route'] = route
 
@@ -336,11 +371,11 @@ function ModelForm({
 /**
  * 添加一个供应商。
  *
- * 走的是 `providers` 的**合并**语义 ✓（新键 = 新增，已有键 = 只更新提到的字段），
- * 所以不需要"先读再写"，也碰不到别的供应商 ✓。
+ * 走的是 `providers` 的**合并**语义（新键 = 新增，已有键 = 只更新提到的字段），
+ * 所以不需要"先读再写"，也碰不到别的供应商。
  *
- * ⚠️ **标识名必须填、而且必须合法**：它就是配置里的键 ✓（展示名是另一个字段 `label`）。
- * 键会被 `activeProvider` 引用，写成奇怪的东西之后很难收拾 ✓。
+ * ⚠️ **标识名必须填、而且必须合法**：它就是配置里的键（展示名是另一个字段 `label`）。
+ * 键会被 `activeProvider` 引用，写成奇怪的东西之后很难收拾。
  */
 function AddProviderForm({
   existing,
@@ -414,6 +449,8 @@ function AddProviderForm({
 const SECTIONS = [
   { id: 'ui', label: '界面', hint: '只影响这台浏览器' },
   { id: 'model', label: '模型', hint: '切换与上下文' },
+  { id: 'skills', label: '技能', hint: '流程说明与确认' },
+  { id: 'plugins', label: '插件', hint: '额外工具与信任' },
   { id: 'data', label: '数据与诊断', hint: '目录、会话、环境' },
 ] as const
 
@@ -441,12 +478,20 @@ export function SettingsPage({
   cleaning,
   cleanupNote,
   onClose,
+  skills,
+  onApproveSkill,
+  onToggleSkill,
+  onReloadSkills,
+  plugins,
+  onApprovePlugin,
+  onTogglePlugin,
+  onReloadPlugins,
 }: SettingsProps) {
   const [confirming, setConfirming] = useState(false)
   const [copied, setCopied] = useState(false)
   /** 当前显示哪一类。刻意不持久化：它是"我现在在看什么"，不是设置 */
   const [section, setSection] = useState<SectionId>('ui')
-  /** 正在修改哪个供应商（卡片展开）；`null` = 都收着。同时只开一个 ✓ */
+  /** 正在修改哪个供应商（卡片展开）；`null` = 都收着。同时只开一个 */
   const [editing, setEditing] = useState<string | null>(null)
   /** 是否展开"添加供应商" */
   const [adding, setAdding] = useState(false)
@@ -630,10 +675,10 @@ export function SettingsPage({
                       </div>
                       <div className="prov-actions">
                         {/*
-                          ⚠️ 卡片上**只有这一个按钮** ✓（用户明确要求的）。
+                          ⚠️ 卡片上**只有这一个按钮**（用户明确要求的）。
                           "切到此"已经搬去输入框下面那一行 —— 换模型是高频动作，
-                          摆在设置页要点三次才到位 ✓；这里只剩"改配置"这一件
-                          低频、且影响所有会话的事 ✓。
+                          摆在设置页要点三次才到位；这里只剩"改配置"这一件
+                          低频、且影响所有会话的事。
                         */}
                         <button
                           type="button"
@@ -684,7 +729,7 @@ export function SettingsPage({
                     </div>
                     <div className="set-hint">
                       需要一个**标识名**（配置里的键，比如 <code>deepseek</code>）——
-                      地址和模型可以留空，之后用「修改」再填 ✓。
+                      地址和模型可以留空，之后用「修改」再填。
                     </div>
                   </div>
                   <div className="prov-body">
@@ -693,7 +738,7 @@ export function SettingsPage({
                       busy={savingConfig}
                       result={configResult}
                       onAdd={(route, fields) =>
-                        /* 写 `providers` 是**合并**语义 ✓：新键=新增，已有键=只更新提到的字段 */
+                        /* 写 `providers` 是**合并**语义：新键=新增，已有键=只更新提到的字段 */
                         onSaveConfig({ providers: { [route]: fields } })
                       }
                     />
@@ -711,6 +756,165 @@ export function SettingsPage({
             </section>
           ) : null}
 
+          {section === 'skills' ? (
+            <section className="set-section">
+              <p className="set-note">
+                技能是你写的流程说明（每个技能一个 SKILL.md）。模型不会自动看到它们：
+                它先按类型查（search_skills），再读正文（use_skill）。
+              </p>
+              <p className="set-note">
+                项目里的 .mvs/skills/ 跟着 git 走，所以**新发现的技能要先确认一次**才可用 ——
+                否则 clone 一个陌生仓库就等于让它进来一组指令。确认之后记下正文哈希，
+                以后文件被改过会退回「待确认」。
+              </p>
+
+              <div className="skill-list">
+                {skills.length === 0 ? (
+                  <p className="set-note">
+                    还没有发现任何技能。在工作区里建 .mvs/skills/&lt;名字&gt;/SKILL.md，
+                    然后点下面的「扫描」。
+                  </p>
+                ) : null}
+
+                {skills.map((skill) => (
+                  <div className="skill-row" key={`${skill.workspace}:${skill.name}`}>
+                    <div className="skill-main">
+                      <div className="skill-head">
+                        <span className="skill-name">{skill.name}</span>
+                        <span className={`skill-tag ${skill.status}`}>
+                          {SKILL_STATUS_LABEL[skill.status]}
+                        </span>
+                        <span className="skill-meta">
+                          {skill.category === '' ? '未分类' : skill.category} ·{' '}
+                          {skill.source === 'project' ? '项目级' : '用户级'}
+                        </span>
+                      </div>
+                      {skill.description === '' ? null : (
+                        <div className="skill-desc">{skill.description}</div>
+                      )}
+                      {skill.message === undefined ? null : (
+                        <div className="skill-msg">{skill.message}</div>
+                      )}
+                      <div className="skill-path">{skill.path}</div>
+                    </div>
+                    <div className="skill-actions">
+                      {skill.status === 'pending' ? (
+                        <button
+                          type="button"
+                          className="side-action"
+                          onClick={() => onApproveSkill(skill.workspace, skill.name)}
+                        >
+                          确认
+                        </button>
+                      ) : null}
+                      {skill.status === 'approved' || skill.status === 'disabled' ? (
+                        <button
+                          type="button"
+                          className="side-action"
+                          onClick={() =>
+                            onToggleSkill(skill.workspace, skill.name, skill.status === 'disabled')
+                          }
+                        >
+                          {skill.status === 'disabled' ? '启用' : '停用'}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <Row
+                label="重新扫描"
+                hint="改了 SKILL.md 之后点一下。不点也不会坏：新会话会重新读一次"
+              >
+                <button type="button" className="side-action" onClick={onReloadSkills}>
+                  扫描
+                </button>
+              </Row>
+            </section>
+          ) : null}
+
+          {section === 'plugins' ? (
+            <section className="set-section">
+              <p className="set-note">
+                插件给模型加新工具。它不跑在你这个进程里：清单里只写一条 argv，宿主动手执行 ——
+                这样超时能杀掉、出错能撤、密钥能不给。
+              </p>
+              <p className="set-note">
+                安装是全局的（&lt;MVS_HOME&gt;/plugins），**启用是按工作区**的：
+                在一个无关仓库里多出一堆工具，模型的工具选择会明显变差。
+                新装的插件要先确认一次清单哈希，因为清单决定它到底跑什么。
+              </p>
+
+              <div className="skill-list">
+                {plugins.length === 0 ? (
+                  <p className="set-note">
+                    还没有安装任何插件。把插件目录放进 &lt;MVS_HOME&gt;/plugins/&lt;名字&gt;/plugin.json，
+                    然后点下面的「重扫」。
+                  </p>
+                ) : null}
+
+                {plugins.map((plugin) => (
+                  <div className="skill-row" key={`${plugin.workspace}:${plugin.name}`}>
+                    <div className="skill-main">
+                      <div className="skill-head">
+                        <span className="skill-name">{plugin.name}</span>
+                        <span className={`skill-tag ${plugin.status}`}>
+                          {PLUGIN_STATUS_LABEL[plugin.status]}
+                        </span>
+                        <span className="skill-meta">
+                          {plugin.version === '' ? '未标版本' : `v${plugin.version}`} ·{' '}
+                          {plugin.toolNames.length} 个工具
+                        </span>
+                      </div>
+                      {plugin.description === '' ? null : (
+                        <div className="skill-desc">{plugin.description}</div>
+                      )}
+                      {plugin.message === undefined ? null : (
+                        <div className="skill-msg">{plugin.message}</div>
+                      )}
+                      <div className="skill-path">{plugin.path}</div>
+                      {plugin.toolNames.length === 0 ? null : (
+                        <div className="skill-tools">{plugin.toolNames.join('、')}</div>
+                      )}
+                    </div>
+                    <div className="skill-actions">
+                      {plugin.status === 'pending' ? (
+                        <button
+                          type="button"
+                          className="side-action"
+                          onClick={() => onApprovePlugin(plugin.workspace, plugin.name)}
+                        >
+                          确认
+                        </button>
+                      ) : null}
+                      {plugin.status === 'enabled' || plugin.status === 'disabled' ? (
+                        <button
+                          type="button"
+                          className="side-action"
+                          onClick={() =>
+                            onTogglePlugin(
+                              plugin.workspace,
+                              plugin.name,
+                              plugin.status === 'disabled',
+                            )
+                          }
+                        >
+                          {plugin.status === 'enabled' ? '停用' : '启用'}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <Row label="重扫插件" hint="放进去一个新插件之后点一下；确认过的插件不会重扫掉">
+                <button type="button" className="side-action" onClick={onReloadPlugins}>
+                  重扫
+                </button>
+              </Row>
+            </section>
+          ) : null}
           {section === 'data' ? (
             <section className="set-section">
               <p className="set-note">会话与配置都存在磁盘上；这里的动作会影响真实数据。</p>

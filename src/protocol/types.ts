@@ -143,9 +143,19 @@ export interface RevertOutcome {
 /**
  * 列表里的一次可撤销事务。
  *
- * 只带**计数**不带完整路径数组：界面在列表里要显示的是「改了 3 个文件」，
- * 而一次大改动的路径数组可以有几千条 —— 为了一个数字把整个索引撑大不划算。
- * 真要逐条看路径，那是在按了撤销之后的报告里。
+ * 计数**和**路径都带，但**默认不传路径** —— 两者各有各的用处，代价也不一样：
+ *
+ *   · 计数（`added`/`modified`/`removed`）：列表里显示「改了 3 个文件」，任何
+ *     时候都要，成本是一个数字。
+ *   · 路径（`paths`）：**只在真的要展开看的时候要** —— 一次大改动的路径数组
+ *     可以有几千条，为了列表上的一个数字把整个索引撑大不划算。
+ *
+ * 所以 `paths` 是可选的：调用方要（`GET /projection` 带上事务时）才填，
+ * 不填时界面只知道"改了几个"，不知道"改了哪些" —— 这也正是它一直以来只有计数的原因。
+ *
+ * **原来的注释写的是"真要逐条看路径，那是在按了撤销之后的报告里"** —— 那句话
+ * 把顺序说反了：用户要先**看见**改了什么，才谈得上决定要不要撤。
+ * 撤销是事后补救（一年几次），"这一步改了什么"是每次都要确认（一小时几十次）。
  */
 export interface TransactionSummary {
   id: string
@@ -156,6 +166,17 @@ export interface TransactionSummary {
   added: number
   modified: number
   removed: number
+  /**
+   * 这次事务到底动了哪些文件。
+   *
+   * `undefined` = **没要**（列表视图），不是"没有改动" —— 这三种数组也可能
+   * 同时为空（事务提交了但没有净变化），那是"确实没改"，与"不知道"是两件事。
+   */
+  paths?: {
+    added: string[]
+    modified: string[]
+    removed: string[]
+  }
   /** 若这次事务本身是一次恢复，指向被恢复的那次 */
   restoredFrom?: string
 }
@@ -223,6 +244,26 @@ export type ClientCommand =
   | { type: 'create_session'; workspace: string; title?: string }
   | { type: 'rename_session'; sessionId: string; title: string }
   | { type: 'delete_session'; sessionId: string }
+  /*
+   * ── 技能（工作区级） ──
+   *
+   * 三条命令都是**人**的动作，不是模型能调的：模型只有 `search_skills` /
+   * `use_skill` 两个只读工具。确认一个技能的哈希、停用一个技能，都必须由人来做 ——
+   * 否则模型可以写一个技能把自己放行，那条链比单次越权隐蔽得多。
+   */
+  | { type: 'reload_skills'; workspace: string }
+  | { type: 'approve_skill'; workspace: string; name: string }
+  | { type: 'set_skill_enabled'; workspace: string; name: string; enabled: boolean }
+  /*
+   * ── 插件（安装全局、启用按工作区） ──
+   *
+   * 同样是**人**的动作：模型只能调插件带来的工具，不能自己确认、不能自己启用。
+   * `reload_plugins` 不带 workspace 时重扫全部工作区 —— 装完一个新插件之后
+   * 就是这种用法。
+   */
+  | { type: 'reload_plugins'; workspace?: string }
+  | { type: 'approve_plugin'; workspace: string; name: string }
+  | { type: 'set_plugin_enabled'; workspace: string; name: string; enabled: boolean }
   /**
    * 声明「我正在看这些会话」。
    *
@@ -284,17 +325,19 @@ export interface SessionProjection {
    * 这个会话**将要**用的模型名。
    *
    * ⚠️ 有会话级选择时它是**选择值**（不是"上次调用用过的那个"）——
-   * 后者只在模型调用时更新，刚选完还没发消息时会滞后 ✗。
+   * 后者只在模型调用时更新，刚选完还没发消息时会滞后。
    */
   model: string
+  /** 会话日志里解析不了的事件条数（非零才有）—— 它是证据，不能静默丢掉 */
+  malformedEvents?: number
   /**
    * **这个会话选中的模型**（DSH 的 `modelSelection` 语义：会话级、持久）。
    *
-   * 宿主把它一并告诉客户端 ✓ —— 客户端不该自己去猜"全局默认是什么" ✗。
-   * 我一度就是这么猜的（铭牌只读全局生效的供应商 ✗），后果是**每个会话都显示
-   * MVS Agent** ✓ —— 与"切了模型切走再回来又变回去"是同一个症状 ✓。
+   * 宿主把它一并告诉客户端 —— 客户端不该自己去猜"全局默认是什么"。
+   * 我一度就是这么猜的（铭牌只读全局生效的供应商），后果是**每个会话都显示
+   * MVS Agent** —— 与"切了模型切走再回来又变回去"是同一个症状。
    *
-   * 没选过时**不带这个字段**（= 用进程默认 ✓）。
+   * 没选过时**不带这个字段**（= 用进程默认）。
    */
   modelSelection?: { provider?: string; model: string }
   mode: PermissionMode
@@ -329,6 +372,28 @@ export interface SessionProjection {
    * "不知道"，界面显示 `—`，而不是拿 0 冒充"没命中"。
    */
   lastUsage?: Usage
+  /**
+   * **累计**用量（跨所有回合）。
+   *
+   * 和 `lastUsage` 的分工：那个是"最近一次调用"（显示速度、缓存命中率），
+   * 这个是"到现在为止一共"。
+   *
+   * 缺席 = **还没有任何可信的用量数据**（端点没给过 usage）——
+   * 和"用了 0 token"是两件事。
+   */
+  totalUsage?: {
+    inputTokens: number
+    outputTokens: number
+    /**
+     * 缓存命中 token 的累计。
+     *
+     * **缺席 = 不知道**（有端点不给这个字段）。不能拿 0 代替 ——
+     * 那会让"缓存命中率"显示成一个看起来很确定但错的数字。
+     */
+    cachedTokens?: number
+    /** 真的拿到过 usage 的调用次数（不是"调了几次模型"） */
+    calls: number
+  }
   /**
    * 抗疲劳熔断器状态。
    *
@@ -603,6 +668,72 @@ export interface AppStateView {
    * 探测不到时用保守默认值，用户有权利知道自己在用哪个。
    */
   window: { tokens: number; source: string }
+  /**
+   * 所有工作区的技能，拍平成一张表。
+   *
+   * 拍平而不是挂在工作区下面，是因为确认动作是**逐个技能**的：设置页要能
+   * 列出「哪一份待确认」，而它天然带 `workspace` 字段。分层会让界面为了拿
+   * 一个技能名而先展开所有工作区。
+   */
+  skills: SkillSummary[]
+  /**
+   * 所有工作区的插件，拍平成一张表。
+   *
+   * 和 `skills` 同一个理由：确认与启用都是逐个插件的，而它们都带 `workspace`。
+   * 注意「安装」是全局的、「启用」是工作区级的 —— 所以同一个插件可能在这里
+   * 出现多次（每个工作区一条），状态各不相同。
+   */
+  plugins: PluginSummary[]
+}
+
+/**
+ * 一个已安装插件在某个工作区里的状态。
+ *
+ *   enabled   已确认 + 已启用 → 它的工具在模型手里
+ *   disabled  人关掉了，或被标记为"声明与实际不符"
+ *   pending   清单哈希对不上（新装的，或被改过）→ 要人确认
+ *   broken    清单不合规 → `message` 说原因
+ */
+export type PluginStatus = 'enabled' | 'disabled' | 'pending' | 'broken'
+
+export interface PluginSummary {
+  /** 它属于哪个工作区（启用状态是按工作区的） */
+  workspace: string
+  name: string
+  version: string
+  description: string
+  status: PluginStatus
+  /** 它带来的工具名（`plugin__<插件>__<工具>`） */
+  toolNames: string[]
+  message?: string
+  /** 插件安装目录的绝对路径 */
+  path: string
+}
+
+/** 技能在当前工作区里的状态。四个状态互斥，界面按它决定显示什么与能不能点 */
+export type SkillStatus =
+  /** 已确认、已启用：`search_skills` 能查到，`use_skill` 能读 */
+  | 'approved'
+  /** 发现了但哈希对不上（新发现的，或文件被改过）：**不可用**，等人在设置页确认 */
+  | 'pending'
+  /** 人显式停用了 */
+  | 'disabled'
+  /** 加载失败（frontmatter 坏、name 与目录不符、category 非法…）：`message` 说原因 */
+  | 'broken'
+
+export interface SkillSummary {
+  /** 它属于哪个工作区（规范化路径） */
+  workspace: string
+  name: string
+  /** 五个父类型之一；`broken` 时可能是空串（frontmatter 都没读出来） */
+  category: string
+  description: string
+  source: 'project' | 'user'
+  status: SkillStatus
+  /** `broken` 与 `pending` 时说明原因；其余不出现 */
+  message?: string
+  /** `SKILL.md` 的绝对路径 —— 用户要能直接去改它 */
+  path: string
 }
 
 // ---------------------------------------------------------------------------
@@ -649,6 +780,8 @@ export interface Checkpoint {
   sessionId: string
   workspace: string
   model: string
+  /** 会话日志里解析不了的事件条数（非零才有）—— 它是证据，不能静默丢掉 */
+  malformedEvents?: number
   mode: PermissionMode
   status: SessionStatus
   turn: number

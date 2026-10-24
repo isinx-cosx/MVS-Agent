@@ -32,8 +32,8 @@ import {
   type ResolvedConfig,
 } from '../config/index.ts'
 import { StateStore, defaultState, type AppState, type SessionRecord } from '../config/state.ts'
-import { DEFAULT_COMPACTION, type CompactionOptions } from '../context/types.ts'
 import { OpenAICompatibleClient } from '../model/openai-compatible.ts'
+import { DEFAULT_COMPACTION } from '../context/types.ts'
 import { probeContextLength } from '../model/probe.ts'
 import type { ModelClient } from '../model/types.ts'
 import { Policy } from '../policy/index.ts'
@@ -48,10 +48,15 @@ import {
   type SessionStatus,
   type SettingsView,
   type SessionSummary,
+  type SkillStatus,
+  type SkillSummary,
+  type PluginSummary,
   type TransactionSummary,
   type WorkspaceSummary,
 } from '../protocol/types.ts'
 import { createRecovery, RecoveryGuard, type RecoveryManager } from '../recovery/index.ts'
+import { PluginLibrary } from '../plugins/index.ts'
+import { SkillLibrary } from '../skills/index.ts'
 import { createDefaultRegistry, JobRegistry, type ToolRegistry } from '../tools/index.ts'
 import { isMaskedApiKey, type LocalModelConfig, type ModelConfig } from '../config/types.ts'
 import { LocalModelSupervisor, missingConfig, type LocalModelStatus } from './local-model.ts'
@@ -83,6 +88,22 @@ interface WorkspaceEntry {
   /** 后台作业，按工作区一份。见 `jobs.ts` 顶部那段关于恢复层缺口的说明 */
   jobs: JobRegistry
   executor: RecoveryGuard
+  /**
+   * 技能库，按工作区一份。
+   *
+   * 和 `jobs` 同级，理由是同一个：技能的确认状态存在
+   * `<工作区>/.mvs/skills.json`，它天生属于这个工作区，
+   * 换个工作区就是另一套技能。
+   */
+  skills: SkillLibrary
+  /**
+   * 插件库，按工作区一份。
+   *
+   * 注意「安装」与「启用」的层次不同：插件装在 `<MVS_HOME>/plugins`（全机器共享），
+   * 而启用状态存在 `<工作区>/.mvs/plugins.json`。所以这个对象里既有全局信息
+   * （装了哪些），也有本工作区的信息（启用了哪些）。
+   */
+  plugins: PluginLibrary
 }
 
 interface SessionEntry {
@@ -140,7 +161,6 @@ export class Runtime {
    */
   #providers: Record<string, ModelConfig> = {}
   /** `config.activeProvider`。undefined = 用 `model` 段那份 */
-  #activeProvider: string | undefined
 
   #workspaces = new Map<string, WorkspaceEntry>()
   #sessions = new Map<string, SessionEntry>()
@@ -251,7 +271,6 @@ export class Runtime {
      * 不缓存的话「加供应商」会出现"写入成功、界面看不到"。
      */
     this.#providers = { ...(config.providers ?? {}) }
-    this.#activeProvider = config.activeProvider
 
     /*
      * 把本地模型的配置交给监管器。
@@ -344,20 +363,20 @@ export class Runtime {
     /**
      * **只用来定位"改哪一个供应商"**，不影响"当前用的是谁"。
      *
-     * 原来只有 `activeProvider` 一个字段，而它同时干了两件事 ✗：定位 + 切换。
-     * 后果很具体：设置页做成卡片、"修改"一个没在用的供应商时，**必然把它切成当前** ✓ ——
-     * 用户只想改个地址，正在用的模型却被换掉了，而他看不出发生过什么 ✓。
+     * 原来只有 `activeProvider` 一个字段，而它同时干了两件事：定位 + 切换。
+     * 后果很具体：设置页做成卡片、"修改"一个没在用的供应商时，**必然把它切成当前** ——
+     * 用户只想改个地址，正在用的模型却被换掉了，而他看不出发生过什么。
      *
-     * 分开之后：`route` 定位 ✓，`activeProvider` 切换 ✓（不传就不切换 ✓）。
+     * 分开之后：`route` 定位，`activeProvider` 切换（不传就不切换）。
      */
     route?: string
   }): Promise<{ ok: boolean; message?: string }> {
     /*
      * ⚠️ **越界值在这里就拒掉，不要指望归一化那层。**
      *
-     * `normalizeConfig` 对非法值的行为是"警告 + 忽略" ✓ —— 那对读配置是对的
-     * （不能因为一个坏字段就让整个守护进程起不来），但对**用户刚点的保存**是错的 ✗：
-     * 界面会显示"已保存"，而配置里什么都没变 ✓。这类"成功但没生效"最难查。
+     * `normalizeConfig` 对非法值的行为是"警告 + 忽略" —— 那对读配置是对的
+     * （不能因为一个坏字段就让整个守护进程起不来），但对**用户刚点的保存**是错的：
+     * 界面会显示"已保存"，而配置里什么都没变。这类"成功但没生效"最难查。
      */
     if (patch.temperature !== undefined && patch.temperature !== null) {
       const value = patch.temperature
@@ -446,7 +465,7 @@ export class Runtime {
      *
      * 界面侧已经把它放进了 `base`（内置），所以**不显示**删除按钮
      * （见垫片 `describeSettingsNamespace`）。但**外观不是能力** ——
-     * 绕过界面直接发 `removeProviders: ['mvs']` 照样能删掉它 ✗。
+     * 绕过界面直接发 `removeProviders: ['mvs']` 照样能删掉它。
      *
      * 这里挡在服务端，并且**不静默**：打一条警告说明是谁在删、为什么拒绝。
      * 这是一条**策略**而不是不变量 —— `mvs` 是"这个 Agent 自己的那份配置"，
@@ -618,7 +637,7 @@ export class Runtime {
    * 写界面的人，他据此把它列进了"只差一个入口"的清单）。
    *
    * 事实是：工作区**和它名下全部对话**都会从索引里消失，界面上再也找不回来。
-   * 目录里的文件确实一个都不动（那本来就不是我们的东西 ✓），但**对话是我们的** ——
+   * 目录里的文件确实一个都不动（那本来就不是我们的东西），但**对话是我们的** ——
    * 所以它必须和 `deleteSession` 一个标准：**日志挪进回收站**，而不是留在原地
    * 当孤儿（留在原地的意思是：界面上没了，磁盘上还在，而没有任何命令能找回来）。
    */
@@ -680,12 +699,63 @@ export class Runtime {
     const jobs = new JobRegistry(jobsDirFor(canonical))
     await jobs.init()
 
+    /*
+     * 技能库也按工作区一份。
+     *
+     * 这一步会读磁盘（扫两个目录、算哈希），但它只在**挂载工作区**时跑一次；
+     * 之后 `state()` 用的是缓存的视图，不会每次 `/state` 都扫一遍。
+     * 装完 `npm test` 里有一条专门盯「/state 不读盘」的行为差异时可以参考。
+     */
+    const skills = await SkillLibrary.open(canonical)
+
+    /*
+     * 插件库：和技能一样每工作区一份。
+     *
+     * `resolveSecret` 是闭包捕获当前解析后的配置 —— 插件声明 `env` 时才会用到它，
+     * 而且每次调用现取，所以用户在设置页改完密钥不用重启。
+     */
+    const plugins = await PluginLibrary.open(canonical, undefined, (configPath) =>
+      this.#resolveSecret(configPath),
+    )
+
+    /* 把安装的插件变成注册表里的工具（全局一份，工具本身不绑定工作区） */
+    this.#syncPluginTools(plugins)
+
     this.#workspaces.set(canonical, {
       path: canonical,
       recovery,
       jobs,
       executor: new RecoveryGuard(this.#registry, recovery),
+      skills,
+      plugins,
     })
+  }
+
+  /**
+   * 换掉注册表里的插件工具。
+   *
+   * 任何一个工作区的插件库拿到的**工具集合都一样**：安装是全局的，
+   * 而"这个工作区启用没有"是在会话层按 `allowsTool()` 过滤的。
+   * 所以这里传哪个 library 都等价 —— 传当前这个只是省得再造一个。
+   */
+  #syncPluginTools(plugins: PluginLibrary): void {
+    this.#registry.replacePluginTools(plugins.tools())
+  }
+
+  /**
+   * 按配置路径取一个字符串（插件 `env` 声明用）。
+   *
+   * 只做只读遍历，不做任何掩码还原：配置里存的就是真值，
+   * 而"给不给"由插件清单声明 + 用户确认决定。
+   */
+  #resolveSecret(configPath: string): string | undefined {
+    const parts = configPath.split('.')
+    let cursor: unknown = this.#resolved
+    for (const part of parts) {
+      if (typeof cursor !== 'object' || cursor === null) return undefined
+      cursor = (cursor as Record<string, unknown>)[part]
+    }
+    return typeof cursor === 'string' && cursor !== '' ? cursor : undefined
   }
 
   // -------------------------------------------------------------------------
@@ -826,6 +896,16 @@ export class Runtime {
       // 后台作业注册表也传进去 —— 它要进 ToolContext，工具才拿得到
       jobs: workspace.jobs,
       /*
+       * 技能库：同样要进 ToolContext，`search_skills` / `use_skill` 才拿得到。
+       *
+       * 注意它**不随会话变**：一个工作区一份，所有会话共用同一个确认状态。
+       * 这是刻意的 —— 确认过一份技能，在这个工作区里所有会话都应该能用它，
+       * 否则用户会觉得自己刚才那次确认"没生效"。
+       */
+      skills: workspace.skills,
+      /* 插件：会话层用它过滤工具声明 + 给插件工具注入环境 */
+      plugins: workspace.plugins,
+      /*
        * 网络搜索的配置，从 `config.json` 读出来后注入。
        *
        * ⚠️ **工具不自己去读配置文件** —— 那条路会让「工具能不能碰到
@@ -871,8 +951,8 @@ export class Runtime {
     /*
      * ★ **把记下的会话级选择交回去。**
      *
-     * 两个来源：内存里的 `#sessionSelections`（本次进程里选过 ✓）和
-     * **会话记录里的 `model`**（上次进程留下来的 ✓ —— 这条是"跑完重启还在"的关键 ✗→✓）。
+     * 两个来源：内存里的 `#sessionSelections`（本次进程里选过）和
+     * **会话记录里的 `model`**（上次进程留下来的 —— 这条是"跑完重启还在"的关键→）。
      */
     const remembered =
       this.#sessionSelections.get(sessionId) ??
@@ -932,6 +1012,184 @@ export class Runtime {
       // 窗口和它的来源一起给。界面只说一个数字，等于把「这个值是猜的还是量到的」
       // 藏起来了 —— 而它决定了压缩什么时候触发。
       window: { tokens: this.#windowTokens, source: this.#windowSource },
+      skills: this.#allSkillSummaries(),
+      plugins: this.#allPluginSummaries(),
+    }
+  }
+
+  /* ── 插件 ─────────────────────────────────────────────────────────── */
+
+  /** 所有工作区的插件，拍平成一张表（和技能同一个理由：确认是逐个的） */
+  #allPluginSummaries(): PluginSummary[] {
+    const out: PluginSummary[] = []
+    for (const workspace of this.#workspaces.values()) {
+      for (const summary of workspace.plugins.summaries()) {
+        out.push({ workspace: workspace.path, ...summary })
+      }
+    }
+    return out.sort(
+      (a, b) => a.workspace.localeCompare(b.workspace) || a.name.localeCompare(b.name),
+    )
+  }
+
+  /**
+   * 重新扫描插件目录。
+   *
+   * 做三件事，顺序有讲究：
+   *   1. 每个工作区重读自己的启用状态（`plugins.json` 可能被外部改过）
+   *   2. 重扫安装目录（可能刚放进来一个新插件）
+   *   3. **换掉注册表里的插件工具** —— 不换的话，新插件的工具不会出现在
+   *      模型手里，而旧插件的工具还留着
+   */
+  async reloadPlugins(workspaceInput?: string): Promise<boolean> {
+    const targets =
+      workspaceInput === undefined
+        ? [...this.#workspaces.values()]
+        : [this.#workspaceOf(workspaceInput)].filter(
+            (entry): entry is WorkspaceEntry => entry !== undefined,
+          )
+
+    if (targets.length === 0) return false
+
+    for (const workspace of targets) await workspace.plugins.reload()
+
+    const first = [...this.#workspaces.values()][0]
+    if (first !== undefined) this.#syncPluginTools(first.plugins)
+
+    this.#broadcast({ kind: 'state', state: this.state() })
+    return true
+  }
+
+  async approvePlugin(
+    workspaceInput: string,
+    name: string,
+  ): Promise<{ ok: boolean; message?: string }> {
+    const workspace = this.#workspaceOf(workspaceInput)
+    if (workspace === undefined) return { ok: false, message: `未知工作区：${workspaceInput}` }
+    const result = await workspace.plugins.approve(name)
+    this.#syncPluginTools(workspace.plugins)
+    this.#broadcast({ kind: 'state', state: this.state() })
+    return result.ok ? { ok: true } : { ok: false, message: result.message }
+  }
+
+  async setPluginEnabled(
+    workspaceInput: string,
+    name: string,
+    enabled: boolean,
+  ): Promise<{ ok: boolean; message?: string }> {
+    const workspace = this.#workspaceOf(workspaceInput)
+    if (workspace === undefined) return { ok: false, message: `未知工作区：${workspaceInput}` }
+    const result = await workspace.plugins.setEnabled(name, enabled)
+    this.#broadcast({ kind: 'state', state: this.state() })
+    return result.ok ? { ok: true } : { ok: false, message: result.message }
+  }
+
+  /* ── 技能 ─────────────────────────────────────────────────────────── */
+
+  /**
+   * 把每个工作区的技能拍平成一张表。
+   *
+   * 里面包含三种东西，一种都不能少：
+   *   · 可用的（approved）
+   *   · 待确认的（pending）—— 不列出来，用户永远不知道新仓库带了技能
+   *   · 加载失败的（broken）—— 不列出来，「技能消失了」就成了一个谜
+   *
+   * `broken` 的条目不是从 `view.skills` 来的（那些是加载成功的），
+   * 而是从 `view.problems` 里补齐 —— 所以这两段不能合并。
+   */
+  #allSkillSummaries(): SkillSummary[] {
+    const out: SkillSummary[] = []
+
+    for (const workspace of this.#workspaces.values()) {
+      const view = workspace.skills.view()
+
+      /* 同名 problem 给 pending 的条目当说明（「内容已变更，需重新确认」之类） */
+      const reasons = new Map<string, string>()
+      for (const problem of view.problems) {
+        if (problem.name !== null) reasons.set(problem.name, problem.message)
+      }
+
+      for (const skill of view.skills) {
+        const status: SkillStatus = !skill.enabled
+          ? 'disabled'
+          : skill.approved
+            ? 'approved'
+            : 'pending'
+        const message =
+          status === 'pending' ? (reasons.get(skill.name) ?? '尚未确认（第一次发现）') : undefined
+        out.push({
+          workspace: workspace.path,
+          name: skill.name,
+          category: skill.category,
+          description: skill.description,
+          source: skill.source,
+          status,
+          path: skill.path,
+          ...(message === undefined ? {} : { message }),
+        })
+      }
+
+      for (const problem of view.problems) {
+        /* 已经在上面作为 pending 出现的，不重复列 */
+        if (problem.name !== null && view.skills.some((skill) => skill.name === problem.name)) continue
+        out.push({
+          workspace: workspace.path,
+          name: problem.name ?? path.basename(path.dirname(problem.path)),
+          category: '',
+          description: '',
+          source: problem.path.startsWith(workspace.path) ? 'project' : 'user',
+          status: 'broken',
+          message: problem.message,
+          path: problem.path,
+        })
+      }
+    }
+
+    return out.sort(
+      (a, b) => a.workspace.localeCompare(b.workspace) || a.name.localeCompare(b.name),
+    )
+  }
+
+  /** 重新扫描某个工作区的技能目录。返回 false = 没有这个工作区 */
+  async reloadSkills(workspaceInput: string): Promise<boolean> {
+    const workspace = this.#workspaceOf(workspaceInput)
+    if (workspace === undefined) return false
+    await workspace.skills.reload()
+    this.#broadcast({ kind: 'state', state: this.state() })
+    return true
+  }
+
+  /** 确认一份技能（记下当前哈希）。这是**人**的动作，模型没有对应的工具 */
+  async approveSkill(
+    workspaceInput: string,
+    name: string,
+  ): Promise<{ ok: boolean; message?: string }> {
+    const workspace = this.#workspaceOf(workspaceInput)
+    if (workspace === undefined) return { ok: false, message: `未知工作区：${workspaceInput}` }
+    const result = await workspace.skills.approve(name)
+    this.#broadcast({ kind: 'state', state: this.state() })
+    return result.ok ? { ok: true } : { ok: false, message: result.message }
+  }
+
+  /** 停用/启用一份技能。停用只是让它不出现在清单里，不删文件 */
+  async setSkillEnabled(
+    workspaceInput: string,
+    name: string,
+    enabled: boolean,
+  ): Promise<{ ok: boolean; message?: string }> {
+    const workspace = this.#workspaceOf(workspaceInput)
+    if (workspace === undefined) return { ok: false, message: `未知工作区：${workspaceInput}` }
+    const result = await workspace.skills.setEnabled(name, enabled)
+    this.#broadcast({ kind: 'state', state: this.state() })
+    return result.ok ? { ok: true } : { ok: false, message: result.message }
+  }
+
+  /** 按路径找一个已挂载的工作区。路径不存在或没挂载都返回 undefined */
+  #workspaceOf(input: string): WorkspaceEntry | undefined {
+    try {
+      return this.#workspaces.get(canonicalize(input))
+    } catch {
+      return undefined
     }
   }
 
@@ -968,7 +1226,7 @@ export class Runtime {
           : { contextWindow: masked.model.contextWindow }),
         /*
          * 生成参数也要流出去 —— 设置页要靠它**显示当前值**。
-         * 只写不读的话，界面只能显示空框，用户没法知道现在是"0.5"还是"没设" ✗。
+         * 只写不读的话，界面只能显示空框，用户没法知道现在是"0.5"还是"没设"。
          */
         ...(masked.model.temperature === undefined
           ? {}
@@ -1011,7 +1269,7 @@ export class Runtime {
             ...(cfg.model === undefined ? {} : { model: cfg.model }),
             /*
              * 生成参数也要带出去 —— 设置页的表单按**当前供应商**预填，
-             * 少一个字段，那个框就永远是空的，用户分不清"没设"和"读不到" ✗。
+             * 少一个字段，那个框就永远是空的，用户分不清"没设"和"读不到"。
              */
             ...(cfg.temperature === undefined ? {} : { temperature: cfg.temperature }),
             ...(cfg.maxTokens === undefined ? {} : { maxTokens: cfg.maxTokens }),
@@ -1107,7 +1365,20 @@ export class Runtime {
    * 列出可撤销的事务。**不加载会话** —— 界面刷新时要用它给每张工具卡找回撤销按钮，
    * 而为了画一个按钮把整个会话读起来是浪费。
    */
-  async listTransactions(sessionId: string): Promise<TransactionSummary[] | undefined> {
+  /**
+   * 这个会话的可撤销事务，新的在前。
+   *
+   * `withPaths` 默认 **false**：投影是**每次变化都整份推**的，而一次大改动的路径
+   * 数组可以有几千条 —— 为了列表上一个数字把每次推送都撑大不划算。
+   * 用户点开某一条要看"到底改了哪些文件"时，再按需要。
+   *
+   * ⚠️ 顺序要说清楚：**先能看见改了什么，才谈得上决定要不要撤**。
+   * （这条函数原来的下游注释写反了 —— 它说"路径在按了撤销之后的报告里"。）
+   */
+  async listTransactions(
+    sessionId: string,
+    withPaths = false,
+  ): Promise<TransactionSummary[] | undefined> {
     const recovery = this.#recoveryFor(sessionId)
     if (recovery === undefined) return undefined
     const transactions = await recovery.list()
@@ -1124,6 +1395,19 @@ export class Runtime {
         added: txn.changes.added.length,
         modified: txn.changes.modified.length,
         removed: txn.changes.removed.length,
+        /*
+         * 三个数组**原样**给出（不去重、不排序）—— `diffSnapshots` 已经排过序，
+         * 这里再动一次只会让"界面看到的顺序"和"撤销时的顺序"不一致。
+         */
+        ...(withPaths
+          ? {
+              paths: {
+                added: [...txn.changes.added],
+                modified: [...txn.changes.modified],
+                removed: [...txn.changes.removed],
+              },
+            }
+          : {}),
         ...(txn.restoredFrom === undefined ? {} : { restoredFrom: txn.restoredFrom }),
       }))
   }
@@ -1290,10 +1574,10 @@ export class Runtime {
     /*
      * ★★ **必须落盘。**
      *
-     * 原来这个选择**只活在内存里** ✗ —— 守护进程一重启就没了，现象正是
-     * 「切了模型、切走再回来又变回 MVS Agent」✓（而这一轮我重启了几十次 ✗）。
-     * DSH 那边这个选择是**会话的 durable 属性**（由 `model/selection` 事件推导 ✓），
-     * 所以放在会话记录里、跟着 `state.json` 走，语义是对的 ✓。
+     * 原来这个选择**只活在内存里** —— 守护进程一重启就没了，现象正是
+     * 「切了模型、切走再回来又变回 MVS Agent」（而这一轮我重启了几十次）。
+     * DSH 那边这个选择是**会话的 durable 属性**（由 `model/selection` 事件推导），
+     * 所以放在会话记录里、跟着 `state.json` 走，语义是对的。
      */
     const entry = this.#sessions.get(sessionId)
     if (entry !== undefined) {
@@ -1368,7 +1652,7 @@ const MVS_PROVIDER_ROUTE = 'mvs'
  * ## 为什么是"丢掉"而不是"拒绝写入"
  *
  * 界面（DSH 的模型设置页）保存供应商时**从不**携带明文密钥 —— 密钥走
- * `credentials/set` 单独一条。所以"要求同一次请求带新密钥"等于**永远改不了主机** ✗。
+ * `credentials/set` 单独一条。所以"要求同一次请求带新密钥"等于**永远改不了主机**。
  * 正确做法：允许改，但把旧凭据**清掉**并明确报警，让用户为新端点重新填一次。
  *
  * 主机（scheme + host + port）相同、只改路径的情况**不清** —— 那还是同一个端点。

@@ -28,6 +28,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import { compact } from '../context/compact.ts'
 import { TokenCalibration } from '../context/calibration.ts'
 import { estimateConversationTokens, estimateTokens } from '../context/tokens.ts'
@@ -62,7 +63,10 @@ import type {
   SessionStatus,
   ToolCallRecord,
 } from '../protocol/types.ts'
-import type { SessionStore } from './persistence.ts'
+import type { PluginLibrary } from '../plugins/library.ts'
+import type { SkillLibrary } from '../skills/library.ts'
+import { skillPromptBlock } from '../skills/prompt.ts'
+import { SessionStore } from './persistence.ts'
 
 const DEFAULT_MAX_STEPS = 24
 
@@ -165,6 +169,27 @@ export interface SessionDeps {
    * 「没有配置搜索后端」，而不是去刮某个搜索引擎的 HTML 凑答案。
    */
   webSearch?: WebSearchConfig
+  /**
+   * 技能库（每个工作区一份，由 Runtime 注入）。
+   *
+   * 它做两件事：
+   *   1. 让系统提示里出现那五个类型（见 `skillPromptBlock()`）——
+   *      只由常量生成，所以装多少技能都不改动常驻前缀
+   *   2. 给 `search_skills` / `use_skill` 提供实现（`ctx.skills`）
+   *
+   * 不传时两个工具仍在（工具表是固定的），但调用会**明确失败**：
+   * 「这个环境没有技能能力」。那比"假装读到了技能"好。
+   */
+  skills?: SkillLibrary
+  /**
+   * 插件库（每个工作区一份）。用来做两件事：
+   *   1. 过滤发给模型的工具声明 —— 只给当前工作区启用的插件工具
+   *   2. 给插件工具注入环境（取密钥、报告"声明与实际不符"）
+   *
+   * 安装是全局的（`<MVS_HOME>/plugins`），**启用**是工作区级的，所以
+   * 同一个注册表在不同工作区里能被看到的工具不同。
+   */
+  plugins?: PluginLibrary
 }
 
 export interface InitResult {
@@ -185,7 +210,21 @@ export class Session {
   #pending: PendingApproval | null = null
   #approvals = new Map<string, (granted: boolean) => void>()
   #abort: AbortController | null = null
+  /**
+   * 回放会话日志时**解析不了**的事件条数。
+   *
+   * ⚠️ 这个数以前只写不读 —— 也就是说：日志里坏了 N 条事件，
+   * 会话照常打开，而**没有任何人知道**。那正是这个项目最忌的
+   * 「失败不出来」。
+   *
+   * 现在它随投影出去（`projection().malformedEvents`），界面上会显示一行。
+   * **不删掉它**也有理由：数字本身就是证据，删了就等于把这件事抹平。
+   */
   #malformedEvents = 0
+  /** 子代理深度（深度 1 之外禁止再开）*/
+  #subagentDepth = 0
+  /** 本会话开过几个子代理（只用于生成 id 与日志）*/
+  #subagentCount = 0
   #contextOptions: CompactionOptions
   /** 「压缩后仍超预算」每轮只警告一次，避免变成事件流噪音 */
   #contextWarnedThisTurn = false
@@ -208,6 +247,25 @@ export class Session {
    * 有了它，界面才能显示缓存命中率与真实的 token/秒，而不是只能显示上下文估算。
    */
   #lastUsage: Usage | null = null
+
+  /**
+   * 这个会话**累计**用了多少（跨所有回合）。
+   *
+   * 和 `#lastUsage` 的分工：那个是"最近一次调用"（用来显示速度和缓存命中率），
+   * 这个是"到现在为止一共"（P3 的用量面板）。
+   *
+   * ⚠️ `cachedKnown` 是必需的，不是洁癖：有些端点不给 `cached_tokens` ——
+   * 如果那种情况下把它当成 0 累加，"缓存命中率"会显示成一个**看起来很确定但错的**
+   * 数字（比如 0%）。所以要么整段数据可信，要么这一格显示"不知道"。
+   */
+  #totalUsage: {
+    inputTokens: number
+    outputTokens: number
+    cachedTokens: number
+    cachedKnown: boolean
+    /** **真的拿到过 usage 的调用次数** —— 它不是"调了几次模型" */
+    calls: number
+  } = { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cachedKnown: false, calls: 0 }
 
   /**
    * **这个会话**选中的模型（DSH 的 `modelSelection` 里那份会话级意图）。
@@ -265,7 +323,7 @@ export class Session {
     this.#toolCalls = rebuildToolCalls(events)
 
     if (this.#deps.system !== undefined && this.#messages[0]?.role !== 'system') {
-      this.#messages.unshift({ role: 'system', content: this.#deps.system })
+      this.#messages.unshift({ role: 'system', content: this.#systemText() })
     }
 
     if (checkpoint !== null) {
@@ -350,6 +408,12 @@ export class Session {
        * 真的生效了（不用真的发一次请求）。
        */
       model: this.#selection?.model ?? this.#deps.modelName,
+      /*
+       * 日志里解析不了的事件条数。**只在非零时给** ——
+       * 0 是常态，每次投影都带一个 0 只是噪音；
+       * 而"缺席"与"零"在这里含义相同（都没坏），所以这样省略是安全的。
+       */
+      ...(this.#malformedEvents === 0 ? {} : { malformedEvents: this.#malformedEvents }),
       /* 会话级选择一并报给客户端 —— 见 `SessionProjection.modelSelection` 的注释 */
       ...(this.#selection === undefined ? {} : { modelSelection: this.#selection }),
       mode: this.#deps.policy.mode,
@@ -368,6 +432,22 @@ export class Session {
       interruptedCall: this.#interrupted === null ? null : { ...this.#interrupted },
       /* 最近一次调用的用量（缓存命中、引擎自报速度）—— 见 `#lastUsage` 的注释 */
       ...(this.#lastUsage === null ? {} : { lastUsage: { ...this.#lastUsage } }),
+      /*
+       * 累计用量。`calls === 0` 表示**这个会话还没有任何可信的用量数据** ——
+       * 界面据此显示"不知道"，而不是显示 0 tokens。
+       */
+      ...(this.#totalUsage.calls === 0
+        ? {}
+        : {
+            totalUsage: {
+              inputTokens: this.#totalUsage.inputTokens,
+              outputTokens: this.#totalUsage.outputTokens,
+              ...(this.#totalUsage.cachedKnown
+                ? { cachedTokens: this.#totalUsage.cachedTokens }
+                : {}),
+              calls: this.#totalUsage.calls,
+            },
+          }),
       fatigue: (() => {
         const status = this.#deps.policy.status()
         return {
@@ -824,7 +904,16 @@ export class Session {
     await this.#compactIfNeeded()
 
     // 调用前先算一遍「我们以为这次请求有多大」，等真实 usage 回来做校准
-    const schemas = this.#deps.registry.toModelSchemas()
+    /*
+     * 插件工具按**工作区**过滤：模型只该看见当前工作区里启用的那一批。
+     *
+     * 过滤的是**发给模型的声明**，不是注册表本身 —— 注册表里放着所有已安装
+     * 插件的工具（安装是全局的），而"启用"是工作区的事。执行时还有第二道
+     * 检查（`#invokeTool`），所以模型就算凭空编出一个名字，也跑不起来。
+     */
+    const schemas = this.#deps.registry
+      .toModelSchemas()
+      .filter((schema) => this.#deps.plugins?.allowsTool(schema.name) ?? true)
     const estimatedForThisCall =
       estimateConversationTokens(this.#messages) + estimateTokens(JSON.stringify(schemas))
 
@@ -888,13 +977,176 @@ export class Session {
 
       this.#lastUsage =
         measured === undefined ? output.usage : { ...output.usage, tokensPerSecond: measured }
+
+      /*
+       * 累计（这个会话一共用了多少）。
+       *
+       * ⚠️ **只累加真实回来的数**：端点不给 usage 时上面这个分支不会进来 ——
+       * 所以"没数据"不会变成"加了 0"，两者在 totals 里的区别是
+       * `calls` 有没有 +1（见 `#totalUsage.calls` 的注释）。
+       */
+      this.#totalUsage = {
+        inputTokens: this.#totalUsage.inputTokens + output.usage.inputTokens,
+        outputTokens: this.#totalUsage.outputTokens + output.usage.outputTokens,
+        /* `cachedTokens` 缺失时**不加 0**，而是不动缓存那一格 —— 见类型上的注释 */
+        cachedTokens: this.#totalUsage.cachedTokens + (output.usage.cachedTokens ?? 0),
+        cachedKnown: this.#totalUsage.cachedKnown || output.usage.cachedTokens !== undefined,
+        calls: this.#totalUsage.calls + 1,
+      }
     }
 
     return output
   }
 
   /** 返回回填给模型的内容 */
+  /**
+   * 开一个**子代理** —— 契约见 `ToolContext.spawnAgent`。
+   *
+   * ## 它继承了父会话的一切（这是这个实现的立足点）
+   *
+   * 模型、模式、`policy`、恢复执行器、作业表、搜索配置 —— **都是同一个**。
+   * 这不是为了省事，而是为了保住两条边界：
+   *
+   *   · 子代理的**每次**工具调用照样过 `policy` ——
+   *     所以它在 `read-only` 下同样写不了东西，不可能"绕过权限"；
+   *   · 每次改动照样进**恢复事务** ——
+   *     所以它写的东西也能被撤，而且事务是**按每次调用**归的，
+   *     不会和父会话的改动混成一笔。
+   *
+   * 别的实现里"子代理"常常是另一条**不受管制**的通道 —— 这里刻意不是。
+   *
+   * ## 三个刻意的限制
+   *
+   *  1. **深度 1**：子代理不能再开子代理。递归的失败方式（无限开、互相等）最难收拾。
+   *  2. **非交互**：`interactive: false` 时策略里的 `ask` 降级成 `deny`
+   *     —— 子代理**不会卡在等人点确认**，它直接失败并如实回报。
+   *  3. **结果有界**（截断在工具那一层做）：交回来的是结论，不是历史。
+   */
+  /**
+   * 系统提示 = 宿主给的 + 技能块。
+   *
+   * 技能块**只由五个类型常量生成**（`skillPromptBlock()`），不含任何技能名，
+   * 所以增删技能不会改动常驻前缀 —— 前缀缓存一直有效。测试里有一条钉这件事。
+   *
+   * 没有技能能力时**不拼**这一块：否则模型被告知去调两个一定会失败的工具，
+   * 那比不告诉它更糟。
+   */
+  #systemText(): string {
+    const base = this.#deps.system ?? ''
+    if (this.#deps.skills === undefined) return base
+    return `${base}\n\n${skillPromptBlock()}`
+  }
+
+  async #spawnAgent(input: {
+    prompt: string
+    name?: string
+    signal?: AbortSignal
+  }): Promise<{
+    text: string
+    sessionId: string
+    turns: number
+    usage?: { inputTokens: number; outputTokens: number }
+  }> {
+    if (this.#subagentDepth >= 1) {
+      throw new Error('子代理不能再开子代理（深度上限 1）—— 请自己在这次委派里完成。')
+    }
+
+    const sessionId = `${this.#deps.sessionId}-sub-${++this.#subagentCount}`
+    /* 放在父会话的同一个父目录下 —— 一眼能看出它们是同一次工作的产物 */
+    const dir = path.join(path.dirname(this.#deps.store.dir), sessionId)
+
+    const childStore = new SessionStore(dir, sessionId)
+    /*
+     * ⚠️ **必须先 `init()`。**
+     *
+     * 不 init 的话 store 不会建目录，而 `Session.init()` 会往
+     * `events.jsonl` 里写 → 直接 ENOENT（我第一次就漏了这一步，
+     * 测试里那条报错把完整路径打了出来，所以一眼能看出是目录没建）。
+     */
+    await childStore.init()
+
+    const child = new Session({
+      ...this.#deps,
+      sessionId,
+      store: childStore,
+      /*
+       * 系统提示只讲任务，不讲"你是 MVS Agent"那一套 ——
+       * 子代理的目标单一，套用父级的人格提示只会让它开始扮演。
+       */
+      system:
+        `你是 MVS Agent 的子代理。工作目录是 ${this.#deps.workspace}。` +
+        (input.name === undefined ? '' : `这次委派的名字是 ${input.name}。`) +
+        '只做交给你的那件事，做完就给结论；不需要征询，也看不到主对话的历史。',
+      /* ★ 非交互：ask 会降级成 deny —— 它不能卡在等人确认上 */
+      interactive: false,
+    })
+    child.#subagentDepth = this.#subagentDepth + 1
+
+    await child.init()
+
+    /* 等它那一轮真的结束（`sendUserMessage` 是立刻返回的） */
+    const finished = new Promise<void>((resolve) => {
+      const off = child.subscribe((envelope) => {
+        const type = envelope.event.type
+        if (type === 'turn_finished' || type === 'error') {
+          off()
+          resolve()
+        }
+      })
+    })
+
+    const onAbort = (): void => {
+      child.abort()
+    }
+    input.signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      await child.sendUserMessage(input.prompt)
+      await finished
+    } finally {
+      input.signal?.removeEventListener('abort', onAbort)
+    }
+
+    const projection = child.projection()
+
+    /* 最后一条**有文字**的助手消息 —— 空的那条不算（工具调用帧里常见） */
+    let text = ''
+    for (let i = projection.messages.length - 1; i >= 0; i--) {
+      const message = projection.messages[i]
+      if (message === undefined) continue
+      if (message.role === 'assistant' && message.content !== '') {
+        text = message.content
+        break
+      }
+    }
+
+    const turns = projection.turn
+    const usage = projection.totalUsage
+    return {
+      text,
+      sessionId,
+      turns,
+      ...(usage === undefined
+        ? {}
+        : { usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } }),
+    }
+  }
+
   async #invokeTool(call: ToolCall, signal: AbortSignal): Promise<string> {
+    /*
+     * 插件工具按**工作区**过滤：安装是全局的，启用是工作区级的。
+     *
+     * 这一道必须在策略判定**之前**：没启用的工具连"要不要问人"都不该谈，
+     * 否则用户在 A 仓库点了允许，B 仓库里同一个插件也跟着能跑。
+     */
+    if (this.#deps.plugins !== undefined && !this.#deps.plugins.allowsTool(call.name)) {
+      return await this.#settle(
+        call,
+        false,
+        `工具 ${call.name} 在当前工作区没有启用（或它所属的插件还没确认）。` +
+          '到设置页的插件一栏确认并启用之后再试，或者换一个工具。',
+      )
+    }
+
     const tool = this.#deps.registry.get(call.name)
     // 未知工具按最危险的一档处理，不给它「因为查不到所以放行」的机会
     const risk = tool?.risk ?? 'execute'
@@ -957,6 +1209,18 @@ export class Session {
        * 工具自己绕过那条线等于给密钥泄露开了个后门，而且是看起来正当的那种。
        */
       ...(this.#deps.webSearch === undefined ? {} : { webSearch: this.#deps.webSearch }),
+      /*
+       * 技能能力：同样由会话层注入。
+       *
+       * 工具只拿到「按类型查、按名字读」这两个动作，拿不到文件系统、
+       * 拿不到确认状态的写入口 —— 「确认某个技能」是**人**的动作，
+       * 不是模型能调的工具。
+       */
+      ...(this.#deps.skills === undefined ? {} : { skills: this.#deps.skills.toolApi() }),
+      /* 插件工具的执行期环境：密钥解析 + 违规上报，都由工作区的插件库提供 */
+      ...(this.#deps.plugins === undefined ? {} : { pluginEnv: this.#deps.plugins.pluginEnv() }),
+      /* 子代理能力由会话注入（工具层不自己造会话）*/
+      spawnAgent: (agentInput) => this.#spawnAgent(agentInput),
     }
     const { result, transactionId } = await this.#deps.executor.execute(
       call.name,

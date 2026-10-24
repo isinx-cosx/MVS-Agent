@@ -10,14 +10,12 @@ import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { createRecovery, RecoveryGuard, RecoveryManager } from '../src/recovery/index.ts'
 import { createDefaultRegistry } from '../src/tools/index.ts'
 import type { ToolContext } from '../src/tools/types.ts'
 import os from 'node:os'
 
-const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 
 interface Harness {
   root: string

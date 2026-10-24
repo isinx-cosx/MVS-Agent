@@ -44,7 +44,7 @@ try {
   const chat = JSON.stringify(props.chat_template ?? '')
   console.log(`     chat template 提到 tools：${/tool/i.test(chat)}`)
 } catch (err) {
-  console.log(`     ✗ 读不到 /props：${err.message}`)
+  console.log(`    读不到 /props：${err.message}`)
 }
 
 console.log('')
@@ -59,7 +59,7 @@ console.log('  ── 2. 工具')
 const state = await (await fetch(`${BASE}/state`)).json()
 const workspace = state.state.workspaces[0]
 if (workspace === undefined) {
-  console.log('     ✗ 没有工作区，测不了')
+  console.log('    没有工作区，测不了')
   process.exit(1)
 }
 console.log(`     工作区 ${workspace.path}`)
@@ -115,5 +115,5 @@ console.log(`     消息 ${messages.length} 条，种类：${[...kinds].join(', 
 
 const usedTool = [...kinds].some((k) => /tool/i.test(k))
 console.log('')
-console.log(usedTool ? '  ✓ Agent 用上了工具' : '  ✗ 没看到工具调用 —— 模型只回了文字')
+console.log(usedTool ? ' Agent 用上了工具' : ' 没看到工具调用 —— 模型只回了文字')
 process.exitCode = usedTool ? 0 : 1

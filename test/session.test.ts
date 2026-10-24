@@ -11,18 +11,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { Session, SessionStore, type ToolExecutor } from '../src/host/index.ts'
 import { Policy } from '../src/policy/index.ts'
-import { okResult, failResult, type ToolResult } from '../src/tools/types.ts'
+import { okResult, type ToolResult } from '../src/tools/types.ts'
 import { createDefaultRegistry } from '../src/tools/index.ts'
 import type { ModelClient, ModelEvent } from '../src/model/types.ts'
-import type { HostEvent, PermissionMode, SessionStatus } from '../src/protocol/types.ts'
+import type { HostEvent, PermissionMode } from '../src/protocol/types.ts'
 import type { Envelope } from '../src/protocol/types.ts'
 import os from 'node:os'
 
-const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 
 // ---------------------------------------------------------------------------
 // 测试替身

@@ -30,6 +30,50 @@ export interface SessionSummary {
   updatedAt: string
 }
 
+/**
+ * 一份技能在某个工作区里的状态。四个状态互斥，界面按它决定显示什么、能不能点。
+ *
+ *   approved  已确认，模型查得到
+ *   pending   发现了但哈希对不上（新发现的，或文件被改过）—— 要人确认
+ *   disabled  人显式停用了
+ *   broken    加载失败（frontmatter 坏、name 与目录不符…）—— `message` 说原因
+ */
+export type SkillStatus = 'approved' | 'pending' | 'disabled' | 'broken'
+
+export interface SkillSummary {
+  /** 它属于哪个工作区（规范化路径） */
+  workspace: string
+  name: string
+  category: string
+  description: string
+  source: 'project' | 'user'
+  status: SkillStatus
+  message?: string
+  /** `SKILL.md` 的绝对路径 —— 用户要能直接去改它 */
+  path: string
+}
+
+/**
+ * 一个已安装插件在某个工作区里的状态。
+ *
+ *   enabled   已确认且已启用 → 它的工具在模型手里
+ *   disabled  人关掉了，或被标记为「声明与实际不符」
+ *   pending   清单哈希对不上（新装的，或被改过）→ 要人确认
+ *   broken    清单不合规 → `message` 说原因
+ */
+export type PluginStatus = 'enabled' | 'disabled' | 'pending' | 'broken'
+
+export interface PluginSummary {
+  workspace: string
+  name: string
+  version: string
+  description: string
+  status: PluginStatus
+  toolNames: string[]
+  message?: string
+  path: string
+}
+
 export interface ToolCallSummary {
   name?: string
   id?: string
@@ -61,6 +105,16 @@ export interface Projection {
   sessionId: string
   workspace: string
   model: string
+  /**
+   * 会话级选择（供应商 + 模型）。
+   *
+   * ⚠️ 标记「选中」必须用它，不能只用全局配置 —— 两个供应商可能提供同名模型，
+   * 只看模型名会让标记落到「全局那家碰巧同名」的那一项上
+   *（用户看到的就是「只有一个模型能正常显示选中」）。
+   */
+  modelSelection?: { provider?: string; model: string }
+  /** 会话日志里解析不了的事件条数（非零才有）*/
+  malformedEvents?: number
   /** 当前会话的权限模式：`read-only` / `workspace-write` / `full-access` */
   mode: string
   status: string
@@ -83,7 +137,8 @@ export interface Projection {
     tokensPerSecond?: number
   }
   interruptedCall?: InterruptedCall | null
-  /**
+  /** 累计用量。`null` = 还没有可信数据（与"用了 0 token"是两件事） */
+  totalUsage: { inputTokens: number; outputTokens: number; cachedTokens?: number; calls: number } | null  /**
    * 有一次工具调用**正在等人批准**。
    *
    * ⚠️ 这个字段从第一天就在投影里，而界面一直没渲染它 —— 后果是：在
@@ -171,7 +226,7 @@ export interface ConfigSummary {
     apiKeyIsPlaintext?: boolean
     /**
      * 生成参数。**只在设过时才有** —— 设置页据此把"没设"显示成空框，
-     * 而不是显示 0（0 是合法且完全不同的取值 ✓）。
+     * 而不是显示 0（0 是合法且完全不同的取值）。
      */
     temperature?: number
     maxTokens?: number
@@ -202,6 +257,10 @@ export interface StateResponse {
     config?: ConfigSummary
     /** 上下文窗口与它的**出处**（daemon 从引擎探测来的，不是猜的） */
     window?: { tokens: number; source: string }
+    /** 所有工作区的技能，拍平成一张表（确认动作是逐个技能的，所以带 workspace） */
+    skills?: SkillSummary[]
+    /** 所有工作区的插件，同样拍平（安装全局、启用按工作区） */
+    plugins?: PluginSummary[]
   }
 }
 
@@ -300,13 +359,13 @@ export async function postCommand(
  *
  * ## 什么时候才允许调它
  *
- * **只有用户明确按了一次"保存"** ✓ —— 这是这个项目的第一条硬规则：
+ * **只有用户明确按了一次"保存"** —— 这是这个项目的第一条硬规则：
  * `~/.mvs-agent/config.json` 只能因为用户的一次配置动作而改变。任何"顺手写回"
  * "同步一下""为了让界面好看"都不允许碰它。
  *
  * ## 字段语义（界面的"空 = 不改"规则就靠这个）
  *
- *   · **不传**  → 不改这个字段（界面里留空走这条 ✓）
+ *   · **不传**  → 不改这个字段（界面里留空走这条）
  *   · `null`   → **清掉**（显式动作，界面里是那个 ×）
  *   · 有值     → 设成这个值
  *
@@ -331,6 +390,43 @@ export async function postModelConfig(
       message: `守护进程回了非 JSON（HTTP ${res.status}）：${text.slice(0, 200)}`,
     }
   }
+}
+
+/**
+ * 一次可撤销事务（`GET /transactions?sessionId=`）。
+ *
+ * 这个端点**专门**给"打开改动面板"用 —— 投影里只有计数，没有路径
+ * （投影每次变化都整份推，背不动路径数组）。
+ */
+export interface TransactionSummary {
+  id: string
+  tool: string
+  summary: string
+  startedAt: string
+  finishedAt: string
+  added: number
+  modified: number
+  removed: number
+  /**
+   * 这次动了哪些文件。
+   *
+   * `undefined` = **没要**（列表视图），和"确实没改"是两件事 ——
+   * 三个数组也可能同时为空（事务提交了但没有净变化）。
+   */
+  paths?: { added: string[]; modified: string[]; removed: string[] }
+  /** 若这次事务本身是一次恢复，指向被恢复的那次 */
+  restoredFrom?: string
+}
+
+/** 读这个会话的改动记录（新的在前） */
+export async function getTransactions(sessionId: string): Promise<TransactionSummary[]> {
+  const res = await fetch(`/transactions?sessionId=${encodeURIComponent(sessionId)}`)
+  if (!res.ok) {
+    /* 把状态码带出来 —— "读不到"和"没有改动"必须分得开 */
+    throw new Error(`读取改动记录失败：HTTP ${res.status}`)
+  }
+  const data = (await res.json()) as { transactions?: TransactionSummary[] }
+  return data.transactions ?? []
 }
 
 export interface SessionSocketHandlers {

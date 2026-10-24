@@ -15,7 +15,7 @@
  *
  * 这个沙箱里 **`spawnSync` 配 `stdio:'pipe'` 会 EPERM**（实测：
  * `status=null`、`error.code='EPERM'`、`stderr` 是 `null`）。而管道一坏，
- * 表现是**全部 32 个工具都报「✗」但一行错误信息都没有** ——
+ * 表现是**全部 32 个工具都报「」但一行错误信息都没有** ——
  * 那看起来像「工具全坏了」，其实是检查器自己收不到输出。
  *
  * 所以这里把子进程的 stderr 接到一个**临时文件**上（fd 重定向不受那条限制），
@@ -53,12 +53,12 @@ try {
     }
 
     if (status === 0) {
-      console.log(`  ✓ ${name}`)
+      console.log(` ${name}`)
       continue
     }
 
     failed += 1
-    console.log(`  ✗ ${name}`)
+    console.log(` ${name}`)
     /*
      * 把报错的最后几行打出来 —— 开头几行是堆栈噪声。
      *

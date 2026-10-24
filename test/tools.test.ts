@@ -209,6 +209,30 @@ test('注册表：toModelSchemas 能生成模型用的声明', () => {
       'read_file',
       'run_command',
       /*
+       * ★ `spawn_agent` —— 唯一的「会再开一个 agent」的工具。
+       *
+       * 标成 `execute` 而不是 `read`：它能读到、改到、跑到任何东西，
+       * 按**可能的最坏后果**标。钉在这里是为了钉住这个判断 ——
+       * 以后有人把它降成 `read`（"只是个委派嘛"），
+       * `workspace-write` 下就不会再为它要那一次确认了。
+       */
+      /*
+       * `search_skills` / `use_skill` —— 技能系统的两个工具。
+       *
+       * 都是 `read`：不执行、不出网、不写文件，唯一影响是往上下文里加文本。
+       * 钉在这里是为了钉住两件事：
+       *   1. 它们必须在工具表里（少了这两条，模型永远查不到技能，
+       *      而系统提示仍然会说「用 search_skills 查」）
+       *   2. 它们不能被降级成需要确认（查询技能要人点确认是没必要的摩擦，
+       *      而且会训练用户闭眼点）
+       *
+       * 注意这里按**名字排序**（断言用的是 sort 之后的结果）：
+       * search_skills < spawn_agent < use_skill。
+       */
+      'search_skills',
+      'spawn_agent',
+      'use_skill',
+      /*
        * ★ `web_fetch` / `web_search` —— **这个集合里唯一会离开这台机器的两个**。
        *
        * 所以它们单独一档 `risk: 'network'`，而不是并进 `read`：

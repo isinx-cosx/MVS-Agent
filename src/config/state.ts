@@ -27,10 +27,10 @@ export interface SessionRecord {
   /**
    * **这个会话选中的模型** —— DSH 的 `modelSelection` 语义（会话级、持久的）。
    *
-   * ⚠️ 必须**落盘**。它以前只活在内存里（`Runtime.#sessionSelections`）✗ ——
-   * 守护进程一重启就没了，于是"切了模型、切走再回来又变回 MVS Agent" ✓。
-   * DSH 那边这个选择是**会话的 durable 属性**（由 `model/selection` 事件推导 ✓），
-   * 放在会话记录里是对的 ✓。
+   * ⚠️ 必须**落盘**。它以前只活在内存里（`Runtime.#sessionSelections`） ——
+   * 守护进程一重启就没了，于是"切了模型、切走再回来又变回 MVS Agent"。
+   * DSH 那边这个选择是**会话的 durable 属性**（由 `model/selection` 事件推导），
+   * 放在会话记录里是对的。
    */
   model?: { provider?: string; model: string }
 }
@@ -179,8 +179,8 @@ export function normalizeState(input: unknown): AppState {
          * ⚠️ **选中模型必须在这里被保留。**
          *
          * 这个函数是**重建**记录的地方 —— 少带一个字段，那个字段就会在
-         * "保存一次状态"之后**凭空消失** ✗（现象：切了模型、重启/切走回来
-         * 又变回默认 ✓）。这类"读回来时少带了字段"的坑，这个文件里的注释
+         * "保存一次状态"之后**凭空消失**（现象：切了模型、重启/切走回来
+         * 又变回默认）。这类"读回来时少带了字段"的坑，这个文件里的注释
          * 已经记过一次（见 `projection()` 那段）。
          */
         ...(isRecord(item.model) && typeof item.model.model === 'string' && item.model.model !== ''

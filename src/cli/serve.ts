@@ -93,7 +93,7 @@ const runtime = new Runtime({
   config: configStore,
   overrides: args.overrides,
 })
-const init = await runtime.init()
+await runtime.init()
 
 // 命令行指定的工作区直接开；已经在索引里的就不重复留审计
 await runtime.openWorkspace(workspace)
@@ -182,11 +182,6 @@ const publicUrl = (rel: string): string => `${info.origin}${rel}`
 const firstTimeUrl = (rel: string): string => `${info.origin}/auth?token=${info.token}&next=${rel}`
 
 const brandUrl = dist('brand/index.html') ? publicUrl('/brand/') : undefined
-/*
- * 可运行版（`/app/`）**不是主入口** —— 它没做品牌替换，只用于实验和对照。
- * 列出来是因为它有用（DSH 自己的组件渲染真实数据），但要说清它是什么。
- */
-const runnableUrl = dist('app/index.html') ? publicUrl('/app/') : undefined
 
 if (args.dev) {
   process.stdout.write(`\n  界面（Vite 开发服务器，带热更新）：\n    ${info.origin}/?token=${info.token}\n`)
@@ -204,12 +199,6 @@ if (args.dev) {
   process.stdout.write(
     `            ${dim('DSH 自己的前端在跑（组件、按钮、会话行都是它的代码）+ 品牌替换')}\n`,
   )
-  if (runnableUrl !== undefined) {
-    process.stdout.write(`  可运行版  ${runnableUrl}\n`)
-    process.stdout.write(
-      `            ${dim('实验用：DSH 前端整套跑起来、读真实数据 · ⚠️ 没有品牌替换，不是门面')}\n`,
-    )
-  }
   process.stdout.write(`  端点      ${info.origin}\n`)
 
   if (server.requireToken) {

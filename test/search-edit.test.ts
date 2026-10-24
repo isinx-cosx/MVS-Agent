@@ -11,13 +11,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { createDefaultRegistry } from '../src/tools/index.ts'
 import type { ToolContext, ToolResult } from '../src/tools/types.ts'
 import os from 'node:os'
 
-const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const registry = createDefaultRegistry()
 
 async function withWorkspace(fn: (root: string) => Promise<void>): Promise<void> {

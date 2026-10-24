@@ -67,7 +67,6 @@ export interface SaveResult {
 
 export class ConfigStore {
   #dir: string
-  #warnings: string[] = []
   /** 上次加载时文件是坏的 → 保存前先把它留一份 */
   #brokenBackupNeeded = false
   #listeners = new Set<(config: AppConfig) => void>()
@@ -95,7 +94,6 @@ export class ConfigStore {
     if (!existsSync(this.configPath)) {
       const config = defaultConfig() as AppConfig
       await writeFileAtomic(this.configPath, `${JSON.stringify(config, null, 2)}\n`)
-      this.#warnings = warnings
       return { config, warnings, created: true, broken: false }
     }
 
@@ -104,7 +102,6 @@ export class ConfigStore {
       raw = await readFile(this.configPath, 'utf8')
     } catch (err) {
       warnings.push(`读不到配置文件：${messageOf(err)}，已退回默认值`)
-      this.#warnings = warnings
       return { config: defaultConfig() as AppConfig, warnings, created: false, broken: false }
     }
 
@@ -119,13 +116,11 @@ export class ConfigStore {
           `保存时会先把它备份成 .broken-* 再覆盖，不会静默丢掉你的内容。`,
       )
       this.#brokenBackupNeeded = true
-      this.#warnings = warnings
       return { config: defaultConfig() as AppConfig, warnings, created: false, broken: true }
     }
 
     const checked = normalizeConfig(parsed)
     warnings.push(...checked.warnings)
-    this.#warnings = warnings
     return { config: checked.config, warnings, created: false, broken: false }
   }
 
@@ -150,7 +145,7 @@ export class ConfigStore {
      *
      * 出站时密钥被换成 `••••`（见 `maskResolved` / `maskApiKey`）；界面把值原样
      * 传回来时，**掩码不能当真密钥存**。原来这段只处理了 `config.model.apiKey`
-     * ——**没处理 `providers.<route>.apiKey`** ✗
+     * ——**没处理 `providers.<route>.apiKey`**
      *
      * 后果是实测发生过的：在设置页保存一次别的字段，供应商的**真密钥被 4 个字符的
      * 掩码覆盖销毁**（`apiKey` 长度从 35 变成 4），而界面上一切正常。
@@ -189,7 +184,6 @@ export class ConfigStore {
     }
 
     await writeFileAtomic(this.configPath, `${JSON.stringify(config, null, 2)}\n`)
-    this.#warnings = warnings
 
     /*
      * ★ **来源记录：谁在什么时候改了配置的哪些键。**
@@ -478,7 +472,7 @@ export function normalizeConfig(input: unknown): NormalizeResult {
    *   1. 设置页里那张「MVS Agent」卡片，改的其实是**进程级默认模型** ——
    *      用户以为在改"一个供应商"，实际改的是**所有会话的兜底**。
    *      他看到的"改一个、别的都跟着变"就是这么来的。
-   *   2. `activeProvider: 'mvs'` 因为"`providers` 里没有它"被下面的守卫丢掉 ✗
+   *   2. `activeProvider: 'mvs'` 因为"`providers` 里没有它"被下面的守卫丢掉
    *      —— 内存说 mvs、磁盘没这个键。
    *
    * ## 现在

@@ -69,7 +69,7 @@ if (candidates.length === 0) {
 }
 
 if (candidates.length === 0) {
-  console.log('  ✗ 找不到事件日志')
+  console.log(' 找不到事件日志')
   process.exit(1)
 }
 for (const file of candidates) {

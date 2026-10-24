@@ -10,12 +10,14 @@
  * 的「结构守卫」钉住。
  */
 
+import { spawnAgentTool } from './agents.ts'
 import { runCommandTool } from './command-tool.ts'
 import { editTools } from './edit-tool.ts'
 import { fileTools } from './file-tools.ts'
 import { jobOutputTool, killJobTool, listJobsTool } from './job-tools.ts'
 import { ToolRegistry } from './registry.ts'
 import { searchTools } from './search-tools.ts'
+import { searchSkillsTool, useSkillTool } from './skill-tools.ts'
 import { webTools } from './web-tools.ts'
 
 export function createDefaultRegistry(): ToolRegistry {
@@ -47,6 +49,18 @@ export function createDefaultRegistry(): ToolRegistry {
     listJobsTool,
     jobOutputTool,
     killJobTool,
+    spawnAgentTool,
+    /*
+     * 技能：查名字、读正文。
+     *
+     * 两个都是 `read` —— 它们不执行、不出网、不写文件，唯一影响是往上下文
+     * 里加文本。标成 `write` 会让「查一下有什么技能」也要人确认。
+     *
+     * 能力由会话层注入（`ctx.skills`）。没有能力时它们**明确失败**，
+     * 而不是假装读到了技能。
+     */
+    searchSkillsTool,
+    useSkillTool,
   ])
 }
 
@@ -55,6 +69,8 @@ export { JobRegistry } from './jobs.ts'
 export { killTree } from './kill-tree.ts'
 export { resolveInsideRoot, isInside } from './paths.ts'
 export { validate } from './schema.ts'
+export { spawnAgentTool } from './agents.ts'
+export { searchSkillsTool, useSkillTool } from './skill-tools.ts'
 export { readFileTool, writeFileTool, createFileTool, deleteFileTool, fileTools } from './file-tools.ts'
 export { globTool, grepTool, searchTools } from './search-tools.ts'
 export { editTool, editTools } from './edit-tool.ts'

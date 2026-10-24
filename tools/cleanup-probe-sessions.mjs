@@ -73,11 +73,11 @@ for (const s of doomed) {
     if (body?.ok === true) done += 1
     else {
       failed += 1
-      console.log(`    ✗ ${String(s.sessionId).slice(0, 8)}  ${body?.message ?? res.status}`)
+      console.log(`   ${String(s.sessionId).slice(0, 8)}  ${body?.message ?? res.status}`)
     }
   } catch (error) {
     failed += 1
-    console.log(`    ✗ ${String(s.sessionId).slice(0, 8)}  ${error.message}`)
+    console.log(`   ${String(s.sessionId).slice(0, 8)}  ${error.message}`)
   }
 }
 

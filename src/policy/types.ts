@@ -189,6 +189,17 @@ export const MODES: Record<PermissionMode, ModeSpec> = {
  */
 export const DEFAULT_PROTECTED_PATHS = [
   '.git',
+  /*
+   * MVS 自己的工作区状态：`skills/`（技能定义）与 `skills.json`（确认记录）。
+   *
+   * 必须保护的理由是一条**提权链**：模型写一份技能 → 用户确认一次写入 →
+   * 之后这份技能**永久**改变模型的行为。比单次越权隐蔽得多，因为用户以为
+   * 自己只是同意"写一个 markdown 文件"。
+   *
+   * `skills.json` 更要保护：它记着「哪些技能已确认」的哈希。能写它就能
+   * 自己批准自己的技能，整条确认机制形同虚设。
+   */
+  '.mvs',
   '.config/git',
   '.vscode',
   '.idea',

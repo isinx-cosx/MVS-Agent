@@ -17,6 +17,9 @@
  *    工具实现一行都不用改 —— 贵的是契约，便宜的是驱动。
  */
 
+import type { SkillToolApi } from '../skills/types.ts'
+import type { PluginEnvApi } from '../plugins/types.ts'
+
 export type RiskLevel =
   | 'read'
   | 'write'
@@ -120,6 +123,57 @@ export interface ToolContext {
     baseUrl?: string
     maxResults?: number
   }
+  /**
+   * 开一个**子代理**：给它一段任务，它自己跑完，只把结果交回来。
+   *
+   * ## 为什么这个能力也是从 `ctx` 注入的
+   *
+   * 和 `webSearch` 同一条规矩：工具层不该自己去造会话、读配置、摸模型客户端。
+   * 那些都属于宿主层，工具只声明"我需要能开子代理"，由会话把实现塞进来。
+   *
+   * ## 为什么不在这里给出自定义选项（工具子集、模型、温度…）
+   *
+   * v1 刻意**不给** —— 每多一个选项，就多一种"子代理和父代理行为不一致"的
+   * 情况，而那些不一致**不会报错**，只会让结果变得没法解释。
+   * 子代理继承父会话的一切（模型、模式、策略、恢复），这条先说死。
+   *
+   * 返回的 `text` 是**有界**的（由实现截断）—— 子代理的价值是"上下文隔离"，
+   * 把它的整段历史搬回来就等于没开子代理。
+   */
+  spawnAgent?: (input: {
+    prompt: string
+    /** 给这次委派起个名字，只用于日志/错误信息 */
+    name?: string
+    signal?: AbortSignal
+  }) => Promise<{
+    /** 子代理最后一条回复（已截断） */
+    text: string
+    /** 子代理的会话 id —— 出事时可以顺着它去查 */
+    sessionId: string
+    /** 它跑了几轮 */
+    turns: number
+    /** 它花掉的 token（会并入父会话的累计） */
+    usage?: { inputTokens: number; outputTokens: number }
+  }>
+  /**
+   * 技能能力：按类型查名字、按名字读正文。
+   *
+   * 和 `webSearch` / `spawnAgent` 同一条规矩：工具只声明「我需要它」，实现由
+   * 会话层注入。工具层不自己扫工作区、不自己算哈希、不自己判确认状态 ——
+   * 那些都属于宿主层。
+   *
+   * 类型是**只导入**（`import type`）的：`tools/types.ts` 会进浏览器程序，
+   * 而技能层的实现带着 `node:crypto` / `node:fs`，不能被打包进去。
+   */
+  skills?: SkillToolApi
+  /**
+   * 插件工具在执行期需要的两个动作（取密钥、报告违规）。
+   *
+   * 和 `skills` 一样由会话层注入：工具层不读配置、不查插件状态。
+   * 插件工具的**根目录**也从 `ctx.root` 来，不从闭包来 —— 工具对象是所有
+   * 工作区共用的，闭包捕获工作区会让它在别的工作区里用错目录。
+   */
+  pluginEnv?: PluginEnvApi
 }
 
 export const DEFAULT_TIMEOUT_MS = 30_000

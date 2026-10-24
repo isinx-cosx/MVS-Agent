@@ -69,11 +69,11 @@ export function isSingleDollar(match: string): boolean {
  *
  * 这里踩过一个坑，症状很隐蔽：**被拒绝的候选会把正文吃掉。**
  *
- * `replace` 的回调里"返回原串"看起来是"不替换"，但正则**已经越过那一段了** ✗。
+ * `replace` 的回调里"返回原串"看起来是"不替换"，但正则**已经越过那一段了**。
  * 于是 `花了 $5 和 $10 元；$\sin x$ 是公式` 里，`$5 和 $` 被拒之后，
- * 它后面那个真正该渲染的 `$\sin x$` 再也匹配不到 —— 整句一个公式都不渲染 ✗。
+ * 它后面那个真正该渲染的 `$\sin x$` 再也匹配不到 —— 整句一个公式都不渲染。
  *
- * 所以改成自己控制 `lastIndex`：**拒绝时回退到开分隔符的后一位重新扫** ✓。
+ * 所以改成自己控制 `lastIndex`：**拒绝时回退到开分隔符的后一位重新扫**。
  */
 export function maskMath(text: string): { masked: string; spans: MathSpan[] } {
   const spans: MathSpan[] = []

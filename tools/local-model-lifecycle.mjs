@@ -54,7 +54,7 @@ const postMs = Date.now() - t0
 console.log(`     POST 耗时 ${postMs} ms`)
 console.log(`     状态 ${started.status.state}  ${started.status.detail}`)
 if (postMs > 3000) {
-  console.log('     ✗ 太慢了 —— 它不该等到就绪才回响应')
+  console.log('    太慢了 —— 它不该等到就绪才回响应')
   process.exitCode = 1
 }
 
@@ -93,5 +93,5 @@ const ok =
   final.ctxSize === 131072 &&
   stopped.status.state === 'stopped' &&
   left.length === 0
-console.log(ok ? '  ✓ 生命周期全部通过' : '  ✗ 有环节不对')
+console.log(ok ? ' 生命周期全部通过' : ' 有环节不对')
 process.exitCode = ok ? 0 : 1

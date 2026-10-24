@@ -190,14 +190,14 @@ for (;;) {
 if (ready) {
   const props = await (await fetch(`http://127.0.0.1:${PORT}/props`)).json()
   console.log('')
-  console.log(`  ✓ 就绪    n_ctx = ${props.default_generation_settings?.n_ctx ?? '(没读到)'}`)
+  console.log(` 就绪    n_ctx = ${props.default_generation_settings?.n_ctx ?? '(没读到)'}`)
   const models = await (await fetch(`http://127.0.0.1:${PORT}/v1/models`)).json()
   console.log(`  模型 id   ${models.data.map((m) => m.id).join(', ')}   （--alias ${ALIAS}）`)
   console.log('')
   console.log('  守护进程那边用 `profile: "llama"` 连它（见 src/config/resolve.ts）。')
 } else {
   console.log('')
-  console.log(`  ✗ 没能就绪（进程${alive(child.pid) ? '还在' : '已退出'}）`)
+  console.log(` 没能就绪（进程${alive(child.pid) ? '还在' : '已退出'}）`)
   if (existsSync(ERR)) {
     /*
      * ⚠️ 取**含 Error/failed 的那一行**，不是尾部几行 —— 尾部全是参数回显。

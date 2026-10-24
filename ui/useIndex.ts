@@ -20,7 +20,9 @@ import {
   getState,
   type ConfigSummary,
   type PickerCapability,
+  type PluginSummary,
   type SessionSummary,
+  type SkillSummary,
   type WorkspaceSummary,
 } from './client.ts'
 
@@ -32,6 +34,15 @@ export interface IndexState {
   contextWindow: { tokens: number; source: string } | null
   /** 路径选择后端：native（系统框）还是 browse（页面内浏览） */
   picker: PickerCapability | null
+  /**
+   * 技能（所有工作区拍平）。
+   *
+   * 放在索引里而不是单独取一次：它和「有哪些工作区」是同一个时机变化的东西，
+   * 而且设置页本来就跟着索引一起刷新。
+   */
+  skills: SkillSummary[]
+  /** 插件（安装全局、启用按工作区，所以带 workspace） */
+  plugins: PluginSummary[]
   error: string | null
 }
 
@@ -42,6 +53,8 @@ export function useIndex(refreshKey: unknown): IndexState & { refresh: () => voi
     config: null,
     contextWindow: null,
     picker: null,
+    skills: [],
+    plugins: [],
     error: null,
   })
 
@@ -58,6 +71,8 @@ export function useIndex(refreshKey: unknown): IndexState & { refresh: () => voi
           config: res.state.config ?? null,
           contextWindow: res.state.window ?? null,
           picker,
+          skills: res.state.skills ?? [],
+          plugins: res.state.plugins ?? [],
           error: null,
         })
       })
