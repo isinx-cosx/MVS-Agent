@@ -30,13 +30,12 @@ interface CliArgs {
   /** 用 Edge 应用窗口打开界面 */
   app: boolean
   /**
-   * 要不要令牌。
+   * 要不要令牌。`undefined` = 由配置决定（配置缺省时是**要**）。
    *
-   * **默认不要** —— 开发阶段本机只有你一个人用，而唯一真正需要防的
-   * （浏览器里的恶意页面）由 Host / Origin / Sec-Fetch-Site 三道围栏挡住。
-   * 见 `HostServerOptions.requireToken`。
+   * 命令行只在显式给了 `--require-token` / `--no-token` 时才有值，所以
+   * "没说"和"说不要"必须能分开 —— 用一个 boolean 是分不开的。
    */
-  requireToken: boolean
+  requireToken?: boolean
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -44,7 +43,7 @@ function parseArgs(argv: string[]): CliArgs {
   let workspace = process.cwd()
   let dev = false
   let app = false
-  let requireToken = false
+  let requireToken: boolean | undefined
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
@@ -115,7 +114,7 @@ const server = new HostServer({
   runtime,
   port: resolved.port,
   tokenFile,
-  requireToken: args.requireToken,
+  requireToken: args.requireToken ?? resolved.requireToken,
   serveDevClient: args.dev,
 })
 const info = await server.listen()
@@ -210,10 +209,13 @@ if (args.dev) {
     process.stdout.write(`  ${dim(tokenNote)}\n`)
   } else {
     process.stdout.write(
-      `  ${dim('未要求令牌（默认）。挡的是浏览器里的恶意页面 —— Host / Origin / Sec-Fetch-Site 三道围栏，与令牌无关，一直生效。')}\n`,
+      `  ${dim('令牌：关（显式关掉的 —— --no-token 或配置 server.requireToken=false）。')}\n`,
     )
     process.stdout.write(
-      `  ${dim('要令牌就加 --require-token：那时「能连上端口」和「有权限」才分成两件事（防同机器另一个账户）。')}\n`,
+      `  ${dim('关掉之后，同机的任何程序都能直接调 /command（它能执行命令、能写文件）。')}\n`,
+    )
+    process.stdout.write(
+      `  ${dim('浏览器里的跨站页面仍然被 Host / Origin / Sec-Fetch-Site 三道挡着，与令牌无关。')}\n`,
     )
   }
 }

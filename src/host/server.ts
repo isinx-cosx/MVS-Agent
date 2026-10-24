@@ -159,22 +159,22 @@ export interface HostServerOptions {
   /**
    * 是否**要求令牌**。
    *
-   * ## 默认 false —— 开发阶段不需要
+   * ## 默认 true（2026-10 改的）
    *
-   * 本机只有你一个人用，而唯一真正需要防的那个攻击者（**浏览器里的一个恶意页面**）
-   * 由 Host / Origin / Sec-Fetch-Site 三道围栏挡住 —— 那些是免费的，一直开着。
+   * 原来默认关，理由是「本机只有你一个人用，而唯一真正需要防的攻击者
+   * （浏览器里的恶意页面）由 Host / Origin / Sec-Fetch-Site 挡住了」。
+   * 那个论证漏了一半：
    *
-   * 令牌多挡的那一类是「**同一台机器上的另一个账户**」：回环端口不按用户隔离，
-   * 另一个账户能连上它，而它发的是直接导航（不带 Origin），围栏拦不住。
-   * 开发阶段没有这个场景。
+   *   · 对于**浏览器**是对的 —— 三道围栏挡着，跨站 JS 进不来；
+   *   · 对于**同机的其他程序**不成立 —— 它们不走浏览器，自己填 header 就能
+   *     声明自己是 localhost，而 `/command` 是能执行命令、能写文件的通道。
    *
-   * ## 什么时候该打开
+   * 「只绑 127.0.0.1」隔离的是**网络**，不是**进程**。
    *
-   *   · 这个服务要对**别人**可达时（共用机器、或者哪天支持非回环绑定）
-   *   · 需要把「能连上端口」和「有权限」分成两件事时
+   * ## 关掉的路径（都是显式的）
    *
-   * 打开方式是 CLI 的 `--require-token`。打开后行为回到原来那套：
-   * `?token=` 一次性换 cookie，`/api` 和 `/` 都要凭据。
+   *   · `--no-token`
+   *   · 配置 `server.requireToken: false`
    *
    * ⚠️ 关掉它**不等于**关了围栏。Host / Origin / Sec-Fetch-Site 三道与令牌无关，
    * 一直生效 —— 它们挡的是 DNS rebinding 和跨站请求，那是另一个类别的问题。
@@ -257,7 +257,7 @@ export class HostServer {
   #tokenSource: 'explicit' | 'created' | 'reused' | 'memory' = 'memory'
   /** 旧令牌文件内容不合法、被换掉时的原值（只用于提示） */
   #tokenFileNote: string | undefined
-  /** 是否要求令牌。默认 false —— 见 `HostServerOptions.requireToken` */
+  /** 是否要求令牌。**默认 true** —— 见 `HostServerOptions.requireToken` */
   #requireToken: boolean
   /**
    * 目录选择用哪个后端。
@@ -304,7 +304,7 @@ export class HostServer {
     this.#serveDevClient = options.serveDevClient ?? false
     this.#uiDir = options.uiDir ?? UI_DIR
     this.#pickDirectory = options.pickDirectory ?? pickDirectory
-    this.#requireToken = options.requireToken ?? false
+    this.#requireToken = options.requireToken ?? true
     this.#picker = resolvePickerKind()
   }
 
@@ -465,7 +465,7 @@ export class HostServer {
     if (this.#isPublicPage(url.pathname)) return null
 
     /*
-     * ④ 令牌 —— **默认不要求**（见 `HostServerOptions.requireToken` 的说明）。
+     * ④ 令牌 —— **默认要求**（见 `HostServerOptions.requireToken` 的说明）。
      *
      * 关掉时这里直接放行；① ② ②b 三道围栏在上面，与令牌无关，一直生效。
      */

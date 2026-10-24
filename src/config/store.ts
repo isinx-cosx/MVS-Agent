@@ -36,6 +36,7 @@ import { mkdir, readFile, rename } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { writeFileAtomic } from './atomic.ts'
+import { migrate, type Migration } from './migrate.ts'
 import {
   API_KEY_MASK,
   CONFIG_VERSION,
@@ -119,7 +120,22 @@ export class ConfigStore {
       return { config: defaultConfig() as AppConfig, warnings, created: false, broken: true }
     }
 
-    const checked = normalizeConfig(parsed)
+    /*
+     * ⚠️ 版本比程序新时必须**拒绝启动**，不能"警告一下照常跑"。
+     *
+     * 旧代码读不懂新字段：它会把不认识的字段丢掉，而下一次保存就写回一份
+     * 缺字段的配置 —— 那一步之后数据永久没了。所以这里把 `DataTooNewError`
+     * 转成一条带文件路径的致命错误，让 `Runtime.init` 与 `serve.ts` 走"起不来"。
+     */
+    let checked
+    try {
+      checked = normalizeConfig(parsed)
+    } catch (err) {
+      if (err instanceof Error && err.name === 'DataTooNewError') {
+        throw new Error(`配置文件无法使用（${path.join(this.#dir, 'config.json')}）：${err.message}`)
+      }
+      throw err
+    }
     warnings.push(...checked.warnings)
     return { config: checked.config, warnings, created: false, broken: false }
   }
@@ -309,20 +325,50 @@ function changedKeys(
   return out
 }
 
-export function normalizeConfig(input: unknown): NormalizeResult {
+/**
+ * 配置的迁移表。
+ *
+ * **现在是空的** —— v1 就是当前版本。留这个常量是为了以后改字段时有明确落点：
+ * 加一条 `{ from: 1, describe, apply }`、把 `CONFIG_VERSION` 提到 2，就够了。
+ */
+export const CONFIG_MIGRATIONS: readonly Migration[] = []
+export function normalizeConfig(rawInput: unknown): NormalizeResult {
   const warnings: string[] = []
   const config: AppConfig = { version: CONFIG_VERSION }
 
-  if (!isRecord(input)) {
+  if (!isRecord(rawInput)) {
     warnings.push('配置根节点不是对象，已忽略全部内容')
     return { config, warnings }
   }
 
-  if (typeof input.version === 'number' && input.version !== CONFIG_VERSION) {
+  /*
+   * 版本：**旧 → 迁移，新 → 抛错**。
+   *
+   * 原来的写法是"版本不等于当前就记一条 warning，然后照常解析" —— 那对
+   * "更新版本写的配置"是**确定性的数据丢失**：旧代码不认识新字段，解析出来
+   * 的对象再被保存一次，那些字段就永久没了。所以更新版本必须抛 `DataTooNewError`，
+   * 由 `ConfigStore.load` 决定拒绝启动。
+   */
+  const migrated = migrate({
+    kind: 'config',
+    current: CONFIG_VERSION,
+    raw: rawInput,
+    migrations: CONFIG_MIGRATIONS,
+  })
+
+  if (migrated.applied.length > 0) {
     warnings.push(
-      `配置版本是 ${input.version}，当前支持 ${CONFIG_VERSION}。未知字段会被忽略。`,
+      `配置从 v${migrated.from} 迁移到 v${CONFIG_VERSION}（${migrated.applied.join('；')}）`,
     )
   }
+
+  /*
+   * 下面全部读**迁移后**的对象（`input`）。
+   *
+   * ⚠️ 这一点很容易漏：如果还去读 `rawInput`，一条"把字段改名"的迁移就只改了
+   * 版本号，字段值仍然是迁移前的样子 —— 而那正是迁移最容易出错的地方。
+   */
+  const input = isRecord(migrated.data) ? migrated.data : rawInput
 
   if (typeof input.profile === 'string' && input.profile !== '') config.profile = input.profile
 
@@ -513,11 +559,31 @@ export function normalizeConfig(input: unknown): NormalizeResult {
 
   if (isRecord(input.server)) {
     const port = input.server.port
+    const token = input.server.requireToken
+    const server: { port?: number; requireToken?: boolean } = {}
+
     if (typeof port === 'number' && Number.isInteger(port) && port >= 0 && port <= 65535) {
-      config.server = { port }
+      server.port = port
     } else if (port !== undefined) {
       warnings.push(`server.port 必须是 0–65535 的整数，实际是 ${JSON.stringify(port)}，已忽略`)
     }
+
+    /*
+     * `server.requireToken` 只认布尔值。
+     *
+     * 类型写错时**不静默退回默认** —— 默认现在是"要求令牌"，而用户写这个键
+     * 通常是想关掉它。写错一个单词就从"关"变成"开"，还会让人以为配置生效了。
+     */
+    if (typeof token === 'boolean') {
+      server.requireToken = token
+    } else if (token !== undefined) {
+      warnings.push(
+        `server.requireToken 必须是 true 或 false，实际是 ${JSON.stringify(token)}，` +
+          '已忽略（仍按默认：要求令牌）',
+      )
+    }
+
+    if (server.port !== undefined || server.requireToken !== undefined) config.server = server
   }
 
   if (isRecord(input.permissions)) {

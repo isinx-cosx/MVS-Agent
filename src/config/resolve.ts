@@ -111,6 +111,8 @@ export interface ConfigOverrides {
   provider?: string
   baseUrl?: string
   model?: string
+  /** 是否要求令牌。命令行的 `--require-token` / `--no-token` 落在这一格 */
+  requireToken?: boolean
   apiKey?: string
   apiKeyEnv?: string
   contextWindow?: number
@@ -160,6 +162,14 @@ export interface ResolvedConfig {
    */
   models: string[]
   port: number
+  /**
+   * 是否要求令牌。**默认 true。**
+   *
+   * `/command` 能执行命令、能写文件，而「只绑 127.0.0.1」不构成认证：同机任何
+   * 进程都能连这个端口，自己填 header 就能声明自己是 localhost。所以默认要求；
+   * `--no-token` 或配置 `server.requireToken=false` 才关。
+   */
+  requireToken: boolean
   defaultMode: PermissionMode
   context: AppConfig['context']
   /**
@@ -303,6 +313,14 @@ export function resolveConfig(options: ResolveOptions): ResolvedConfig {
 
   const port = overrides.port ?? file.server?.port ?? 3080
 
+  /*
+   * 令牌默认**要求**。
+   *
+   * 关闭是显式动作：--no-token，或配置里写 server.requireToken: false。
+   * 顺序是命令行 > 配置文件 > 默认值 —— 和 port 一致。
+   */
+  const requireToken = overrides.requireToken ?? file.server?.requireToken ?? true
+
   const defaultMode =
     overrides.defaultMode ??
     file.permissions?.defaultMode ??
@@ -362,6 +380,7 @@ export function resolveConfig(options: ResolveOptions): ResolvedConfig {
     ...(maxTokens === undefined ? {} : { maxTokens }),
     ...(contextWindow === undefined ? {} : { contextWindow }),
     port,
+    requireToken,
     defaultMode,
     context: { ...file.context, ...overrides.context },
     /*
@@ -433,8 +452,7 @@ export function maskResolved(resolved: ResolvedConfig): MaskedConfig {
       ...(resolved.contextWindow === undefined ? {} : { contextWindow: resolved.contextWindow }),
       includeUsage: resolved.includeUsage,
     },
-    server: { port: resolved.port },
-    permissions: { defaultMode: resolved.defaultMode },
+    server: { port: resolved.port, requireToken: resolved.requireToken },    permissions: { defaultMode: resolved.defaultMode },
     context: {
       triggerRatio: resolved.context?.triggerRatio ?? 0.9,
       outputReserveTokens: resolved.context?.outputReserveTokens ?? 4_096,

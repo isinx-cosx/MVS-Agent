@@ -6,9 +6,10 @@
  */
 
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rename } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rename } from 'node:fs/promises'
 import path from 'node:path'
 import { writeFileAtomic } from './atomic.ts'
+import { migrate, type Migration } from './migrate.ts'
 import { defaultHomeDir } from './store.ts'
 
 export interface WorkspaceRecord {
@@ -58,6 +59,16 @@ export interface AppState {
 
 export const STATE_VERSION = 1
 
+/**
+ * `state.json` 的迁移表。
+ *
+ * **现在是空的** —— v1 就是当前版本，还没有"上一版"要升上来。
+ * 留这个常量是为了让"改一个字段语义"有一个明确的落点：
+ * 加一条 `{ from: 1, describe, apply }`，把 `STATE_VERSION` 提到 2 就够了，
+ * 不需要再设计一遍机制。测试里用注入式 registry 证明这条链路是活的。
+ */
+export const STATE_MIGRATIONS: readonly Migration[] = []
+
 /** 审计上限。超了就丢最老的 —— 它是可见性工具，不是合规留存 */
 export const AUDIT_LIMIT = 500
 
@@ -106,8 +117,47 @@ export class StateStore {
     }
 
     try {
-      return { state: normalizeState(JSON.parse(raw.replace(/^\uFEFF/, ''))), warnings, created: false }
+      const parsed = JSON.parse(raw.replace(/^\uFEFF/, '')) as unknown
+      /*
+       * 迁移在**内存里**做完，成功才落盘。
+       *
+       * 顺序是硬要求：`migrate` → 备份（名字带源版本）→ 原子写。
+       * 迁移失败或写盘失败时，原文件一个字节都不动 —— 那是唯一能保证
+       * 「不会带着半迁移的数据跑」的做法。
+       */
+      const migrated = migrate({
+        kind: 'state',
+        current: STATE_VERSION,
+        raw: parsed,
+        migrations: STATE_MIGRATIONS,
+      })
+
+      if (migrated.applied.length > 0) {
+        const backup = `${this.path}.v${migrated.from}.backup`
+        await copyFile(this.path, backup)
+        await writeFileAtomic(
+          this.path,
+          `${JSON.stringify({ ...(migrated.data as object), version: STATE_VERSION }, null, 2)}\n`,
+        )
+        warnings.push(
+          `状态文件从 v${migrated.from} 迁移到 v${STATE_VERSION}（${migrated.applied.join('；')}），` +
+            `迁移前的副本在 ${path.basename(backup)}`,
+        )
+      }
+
+      return { state: normalizeState(migrated.data), warnings, created: false }
     } catch (err) {
+      /*
+       * ⚠️ **版本比程序新**时不能"重置了事"。
+       *
+       * 重置会连同工作区与会话索引一起丢掉，而那份文件是更新版本写的 ——
+       * 用户回滚程序之后就再也拿不回列表了。这种情况必须让启动失败，
+       * 而不是默默降级成空索引（那是数据丢失）。
+       */
+      if (err instanceof Error && err.name === 'DataTooNewError') {
+        throw new Error(`state.json 无法使用：${err.message}`)
+      }
+
       // 索引坏了不影响功能，只影响「上次开了哪些工作区」。
       // 备份原文再退回空索引 —— 不去猜它能不能救回来，但也不直接销毁。
       const backup = `${this.path}.broken-${Date.now()}`

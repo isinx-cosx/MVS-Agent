@@ -309,7 +309,16 @@ export class Session {
       warnings.push(`事件日志有 ${malformed} 行损坏、已跳过`)
     }
 
-    const checkpoint = await this.#deps.store.readCheckpoint()
+    /*
+     * 检查点：读不到时要**说出原因**。
+     *
+     * 版本不符、或者文件只写了一半，原来的实现是静默 `null` —— 而后果用户直接
+     * 看得到（轮次 / 步数 / 状态回到初始）。顺手把它接进 `InitResult.warnings`，
+     * 和其它"恢复时发现了什么"的消息放在一起。
+     */
+    const checkpointRead = await this.#deps.store.readCheckpointDetailed()
+    const checkpoint = checkpointRead.checkpoint
+    if (checkpointRead.warning !== undefined) warnings.push(checkpointRead.warning)
 
     // 完整性校验：静默地用一个不完整的日志恢复，比不恢复更糟
     if (checkpoint !== null && checkpoint.eventsSeen > envelopes.length) {

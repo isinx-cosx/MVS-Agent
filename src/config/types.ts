@@ -118,6 +118,16 @@ export interface ModelConfig {
 
 export interface ServerConfig {
   port?: number
+  /**
+   * 是否要求令牌。**默认 true。**
+   *
+   * 为什么默认开：`/command` 能执行命令、能写文件，而「只绑 127.0.0.1」不构成认证 ——
+   * 同机任何进程都能连这个端口，自己填个 header 就能声明自己是 localhost
+   * （浏览器里的跨站 JS 被 Host / Origin / `Sec-Fetch-Site` 挡着，那是另一回事）。
+   *
+   * 关掉的显式路径：`--no-token`，或者这里写 false。命令行优先于配置。
+   */
+  requireToken?: boolean
 }
 
 export interface PermissionsConfig {
@@ -365,7 +375,11 @@ export interface MaskedConfig {
      */
     apiKeySourceVar?: string
   }
-  server: { port: number }
+  /**
+   * 服务端设置。`requireToken` 也要出来：界面/诊断要能回答「这个 daemon 到底
+   * 要不要令牌」，而不能只显示一个端口号。
+   */
+  server: { port: number; requireToken: boolean }
   permissions: { defaultMode: PermissionMode }
   context: Required<ContextConfig>
 }

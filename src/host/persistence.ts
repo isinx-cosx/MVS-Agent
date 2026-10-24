@@ -117,20 +117,51 @@ export class SessionStore {
   }
 
   async readCheckpoint(): Promise<CheckpointFile | null> {
+    return (await this.readCheckpointDetailed()).checkpoint
+  }
+
+  /**
+   * 读检查点，并把「为什么没读到」带出来。
+   *
+   * 原来的写法是版本不符就 `return null` —— **完全静默**。后果用户看得见：
+   * 会话的 turn / step / status 全部归零（它们是检查点给的），而重放虽然能重建
+   * 消息，那几个显示值会从头开始。用户看到「昨天还在跑的那个会话今天变成未开始」，
+   * 日志里却一条解释都没有。
+   *
+   * 「失败要可见」这条规矩在别处都守住了，这里没有。
+   */
+  async readCheckpointDetailed(): Promise<{
+    checkpoint: CheckpointFile | null
+    warning?: string
+  }> {
     let raw: string
     try {
       raw = await readFile(this.checkpointPath, 'utf8')
     } catch {
-      return null
+      /* 没有检查点是最常见的情况（新会话），不是错误 */
+      return { checkpoint: null }
     }
     try {
       const parsed = JSON.parse(raw) as CheckpointFile
-      if (parsed.version !== CHECKPOINT_VERSION) return null
-      return parsed
+      if (parsed.version !== CHECKPOINT_VERSION) {
+        return {
+          checkpoint: null,
+          warning:
+            `检查点版本是 ${String(parsed.version)}，当前支持 ${CHECKPOINT_VERSION}，已忽略。` +
+            '消息会从事件日志重放重建，但轮次 / 步数 / 状态会从头开始。',
+        }
+      }
+      return { checkpoint: parsed }
     } catch {
-      // 半个 JSON：上一轮的原子写没来得及 rename 就被杀了。
-      // 这**不代表状态损坏** —— 日志是完整的，可以从日志重建。
-      return null
+      /*
+       * 半个 JSON：上一轮的原子写没来得及 rename 就被杀了。
+       * 这**不代表状态损坏** —— 日志是完整的，可以从日志重建。
+       * 但同样要说一句，否则用户只会看到数字归零。
+       */
+      return {
+        checkpoint: null,
+        warning: '检查点文件只写了一半（写入过程中被中断），已忽略，从事件日志重建。',
+      }
     }
   }
 }
