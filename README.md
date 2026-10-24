@@ -1193,3 +1193,25 @@ import { foldToolCall, rebuildMessages } from '../../protocol/projection.ts'
 
 DeepSeek 的真实端点**从未验证过**：本机网络不通且没有 key。协议形状与 fixture
 回放都验过了，但「换一家真实端点」这件事没有证据。Ollama 的窗口探测是实跑验证的。
+
+---
+
+## 许可证
+
+MIT，全文见 [LICENSE](LICENSE)。
+
+简单说：用、改、卖、再发布都可以，条件是**保留版权声明**，而且不附带任何担保。
+"不附带担保"这条不是形式 —— 这个工具会**读写你磁盘上的文件、执行命令**，
+它出问题时后果由使用者承担。
+
+### 第三方与来源
+
+- 运行期依赖：只有 Node 自带的模块。开发期依赖（React、esbuild、KaTeX 等）
+  及其许可见 `package-lock.json`；KaTeX 的字体按其自身的 OFL 许可分发，
+  构建时会从 `node_modules` 拷进 `web/`（`web/` 不进仓库）。
+- `tools/dialog-worker.mjs`（Windows 原生「选择文件夹」对话框）是按
+  `@deepseek-ai/dsh-host-directory-picker-native` 的 worker **移植**的，
+  注释里写明了它的来源与关键行为。这一份代码的版权归属与原许可**不由本仓库决定**，
+  在对外分发前需要单独确认；其余源码均为本项目自己写的。
+- 仓库里不含任何别人的源码副本：DSH 复刻页、它的垫片、抓来的第三方文档
+  都已经删掉（见提交历史里的三次清理）。

@@ -2,6 +2,8 @@
   "name": "mvs-agent",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
+  "author": "isinx-cosx",
   "type": "module",
   "description": "MVS Agent —— 通用 Agent 内核。v0：模型层（请求进，事件流出）",
   "engines": {
