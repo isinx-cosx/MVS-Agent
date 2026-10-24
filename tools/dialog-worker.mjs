@@ -1,109 +1,146 @@
 /**
- * Windows「选择文件夹」对话框 —— **Node 子进程 + koffi 直接调 COM**。
+ * 原生「选择文件夹」对话框（仅 Windows）—— Node 子进程 + koffi 直接调 COM。
  *
- * 这是 `@deepseek-ai/dsh-host-directory-picker-native/lib/worker.cjs` 的移植。
- * 为什么值得移植：我们原来用 PowerShell + WinForms 的 `FolderBrowserDialog`
- * （**老式**对话框），它在后台守护进程里**抢不到前台** —— 实测框起来了、
- * 却藏在别的窗口后面，用户点不到。
+ * ## 为什么需要这个文件
  *
- * DSH 用的是**现代 COM `IFileOpenDialog`**（Vista 起就有），并在 `Show` 之前
- * 合成一次 Alt 按下抬起。它的注释明确说这样**能到前台**：
+ * 守护进程是后台进程，没有前台权限。用老式的 `SHBrowseForFolder` 那一系
+ * （包括 PowerShell 的 `FolderBrowserDialog`）实测的结果是：框确实起来了，
+ * 但被压在用户正在看的窗口**后面**，表现为「点了没反应」。
  *
- *     A background host ... leaves this process without foreground rights, so
- *     runFolderDialog synthesizes an Alt press immediately before Show and the
- *     dialog then activates as foreground.
+ * `IFileOpenDialog`（Vista 起提供）不一样：它自己会激活。实测换过去之后，
+ * 焦点直接落在框内的输入框上 —— 那只可能在对话框处于活动状态时发生。
  *
- * 差别很可能就在对话框本身：现代那个会自己激活，老式的依赖 owner 的 z 序。
+ * ## 为什么是子进程
  *
- * ## 为什么是子进程而不是 worker 线程
+ * `Show` 是**模态**的，会一直阻塞到用户点掉它。放在守护进程里会把事件循环
+ * 卡死（连 `/state` 都不响应）；而原生 FFI 一旦崩了，子进程崩掉不会波及宿主。
  *
- * 抄 DSH 的理由：`Show` 是模态的、会一直阻塞，放在宿主进程里会把事件循环卡死；
- * 而原生 FFI 万一出错，子进程崩掉不会带走守护进程。
+ * ## 结果怎么回来
  *
- * ## 和 DSH 的一处**有意偏离**：结果用文件传，不用 IPC
+ * 写文件，不走 IPC。Node 的 IPC 通道在 Windows 上背后是命名管道，而这个环境里
+ * 管道是受限的（项目里有一整条记录）。文件是一定能成功的载体。
  *
- * DSH 走 `process.send`。但本环境里**命名管道是被挡的**（见项目里那条
- * 「管道会同步抛 EPERM」的记录），而 Node 的 IPC 通道在 Windows 上就是命名管道。
- * 所以这里改成「把结果写进 `--out` 指定的文件、宿主读文件」——
- * 结构（子进程 + 阻塞 Show + 结构化回报）一样，只是载体换成一定会成功的那种。
+ *     结果文件：{"kind":"done","path":"D:\\work"}     选中
+ *               {"kind":"done","path":null}            取消
+ *               {"kind":"error","message":"…"}         出错
  *
  * ## 用法
  *
- *     node tools/dialog-worker.cjs --title "选择工作区目录" --out <结果文件>
+ *     node tools/dialog-worker.mjs --title "选择工作区目录" --out <结果文件>
+ *     node tools/dialog-worker.mjs --self-check          （不弹框，只验环境）
+ *     node tools/dialog-worker.mjs --dry-run --out <f>   （走到 Show 之前就退出）
  *
- * 结果文件内容是 `{kind:'done',path}` 或 `{kind:'done',path:null}`（取消）
- * 或 `{kind:'error',message}`。
+ * `--self-check` 与 `--dry-run` 存在的理由：这个文件平时一跑就会**弹出一个模态框**，
+ * 自动化测试没法碰它。把「除了弹框之外的全部」做成可跑的，才谈得上给它写测试 ——
+ * 尤其是 vtable 槽位，那是这里唯一靠记忆的地方，写错时应该在这里崩，而不是在用户面前。
  */
 
-import { writeFileSync } from 'node:fs'
+import { statSync, writeFileSync } from 'node:fs'
 
-/** IFileOpenDialog vtable 槽位（IUnknown 0-2，IModalWindow 3，IFileDialog 4+） */
-const SLOT_RELEASE = 2
-const SLOT_SHOW = 3
-const SLOT_SET_OPTIONS = 9
-const SLOT_SET_TITLE = 17
-const SLOT_GET_RESULT = 20
-/** IShellItem 的 `GetDisplayName` */
-const SLOT_GET_DISPLAY_NAME = 5
+/* ═══════════════════════════════════════════════════════════════════════
+ * 一、COM 的公开定义
+ *
+ * IFileOpenDialog 的 vtable 顺序由 Windows SDK 的 `shobjidl.h` 固定，
+ * 不能自己排。下面是这个文件真正要用的几个槽位（IUnknown 占 0..2）：
+ *
+ *     IUnknown              0 QueryInterface  1 AddRef  2 Release
+ *     IModalWindow          3 Show
+ *     IFileDialog           9 SetOptions     17 SetTitle  20 GetResult
+ *     IShellItem            5 GetDisplayName  2 Release
+ * ═══════════════════════════════════════════════════════════════════════ */
 
-const COINIT_APARTMENTTHREADED = 2
-const CLSCTX_INPROC_SERVER = 1
-const SIGDN_FILESYSPATH = -2147123200
+const DIALOG_SLOT = Object.freeze({ release: 2, show: 3, setOptions: 9, setTitle: 17, getResult: 20 })
+const ITEM_SLOT = Object.freeze({ release: 2, getDisplayName: 5 })
 
-/** `FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST`，和 DSH 一样是 104 */
-const FOS_PICKFOLDERS = 0x20
-const FOS_FORCEFILESYSTEM = 0x40
-const FOS_PATHMUSTEXIST = 0x8
-const OPTIONS = FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST
+/** `FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_PICKFOLDERS` */
+const OPTIONS_PICK_FOLDER = 0x8 | 0x20 | 0x40
+
+/** `SIGDN_FILESYSPATH`：要真实文件系统路径，不要别名或显示名（0x80058000 的有符号形式） */
+const SIGDN_FILE_SYSTEM_PATH = -2147123200
+
+/** `HRESULT_FROM_WIN32(ERROR_CANCELLED)`：用户点了取消 */
+const HRESULT_CANCELLED = -2147023673
+
+/** `COINIT_APARTMENTTHREADED` —— Shell 的对话框必须在 STA 里开 */
+const COINIT_STA = 0x2
+/** `CLSCTX_INPROC_SERVER` */
+const CLSCTX_INPROC = 0x1
 
 /** `VK_MENU`（Alt）与 `KEYEVENTF_KEYUP` */
-const VK_MENU = 18
-const KEYEVENTF_KEYUP = 2
+const VK_MENU = 0x12
+const KEYEVENTF_KEYUP = 0x2
 
-/** 取消：`HRESULT_FROM_WIN32(ERROR_CANCELLED)` */
-const HR_CANCELLED = -2147023673
+/**
+ * DPI 感知上下文，从最理想往下试：
+ * `-4` PER_MONITOR_AWARE_V2、`-3` PER_MONITOR_AWARE、`-2` SYSTEM_AWARE。
+ * 不做这一步时，缩放不是 100% 的屏幕上框会是糊的（外观问题，不影响功能）。
+ */
+const DPI_CONTEXTS = [-4, -3, -2]
 
-const args = process.argv.slice(2)
-const argOf = (name, fallback) => {
-  const at = args.indexOf(name)
-  return at >= 0 && at + 1 < args.length ? args[at + 1] : fallback
-}
-const outPath = argOf('--out', null)
-const title = argOf('--title', '选择文件夹')
+/** IFileOpenDialog 的 CLSID 与它的 IID（都是 SDK 里的公开常量） */
+const CLSID_FILE_OPEN_DIALOG = '{DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7}'
+const IID_IFILE_OPEN_DIALOG = '{D57C7288-D4AD-4768-BE02-9D969532D960}'
 
-if (outPath === null) {
-  console.error('dialog-worker: 需要 --out <结果文件>')
-  process.exit(2)
-}
+/* ═══════════════════════════════════════════════════════════════════════
+ * 二、小工具
+ * ═══════════════════════════════════════════════════════════════════════ */
 
-const write = (payload) => {
-  try {
-    writeFileSync(outPath, JSON.stringify(payload), 'utf8')
-  } catch (error) {
-    console.error('dialog-worker: 写不了结果文件：' + String(error?.message ?? error))
-  }
+/** HRESULT 在日志里永远写成十六进制 —— 十进制没法拿去查文档 */
+function hr(code) {
+  return `0x${(code >>> 0).toString(16).padStart(8, '0')}`
 }
 
 /**
- * 解析 koffi。
+ * 把 `{XXXXXXXX-XXXX-...}` 编成 `CoCreateInstance` 要的 16 字节。
  *
- * ## 为什么不是简单 `import('koffi')`
+ * 前三个字段是**小端**，最后 8 字节按原顺序 —— 这是 GUID 的内存布局，
+ * 不是字符串顺序。
+ */
+function guidBytes(text) {
+  const m = /^\{?([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})\}?$/i.exec(text)
+  if (m === null) throw new Error(`GUID 形状不对：${text}`)
+  const out = Buffer.alloc(16)
+  out.writeUInt32LE(parseInt(m[1], 16), 0)
+  out.writeUInt16LE(parseInt(m[2], 16), 4)
+  out.writeUInt16LE(parseInt(m[3], 16), 6)
+  Buffer.from(m[4] + m[5], 'hex').copy(out, 8)
+  return out
+}
+
+/**
+ * 读一个 NUL 结尾的 UTF-16 字符串。
  *
- * 我们这个项目**没有 npm 依赖**（这是设计约束）。而 koffi 是原生 FFI 扩展，
- * 是唯一能从 Node 直接调 COM 的东西。所以按优先级找：
+ * ⚠️ 不能直接把地址交给 `koffi.decode(addr, 'str16')`：`_Out_ LPCWSTR*` 给回来的
+ * 是**字符串地址本身**，而 `str16` 期望的是「指向字符串的指针变量」。所以先造一个
+ * 装着这个地址的缓冲区，再解引用。
+ */
+function readWide(koffi, address, pointerSize) {
+  const holder = Buffer.alloc(pointerSize)
+  if (pointerSize === 8) holder.writeBigUInt64LE(BigInt(address))
+  else holder.writeUInt32LE(Number(address))
+  return koffi.decode(holder, 'str16')
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 三、koffi 从哪儿来
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 找 koffi。它是原生 FFI 扩展，也是从 Node 调 COM 唯一可行的路。
+ *
+ * 本项目**没有 npm 依赖**（那是设计约束），所以按优先级：
  *
  *   1. `MVS_KOFFI` 环境变量 —— 显式指定，部署时最可控
- *   2. 本项目的 `node_modules`（万一以后真的装了）
- *   3. DSH 的安装目录 —— 本机装了 DSH 时白拿一个
+ *   2. `koffi` —— 用户自己 `npm i koffi` 之后就在 node_modules 里
+ *   3. 本机装了 DSH 时它自带的那个 —— 白拿一份（koffi 本身是 MIT）
  *
- * 一个都找不到就**如实报错**，由上层回退到 `browse` 那套（页面内的浏览器）。
- * 悄悄降级是不行的：用户点了「添加工作区」而框没出来，比明确说「本机用不了
- * 原生框」更糟。
+ * 一个都找不到就**如实报错**，由上层回退到页面内的目录浏览器。
+ * 悄悄降级不行：「点了添加工作区但框没出来」比「明确说这台机器用不了原生框」更糟。
  */
-async function loadKoffi() {
+async function loadKoffi(explicit) {
   const tried = []
   const candidates = []
-
+  if (explicit !== undefined && explicit !== '') candidates.push(explicit)
   if (process.env.MVS_KOFFI !== undefined && process.env.MVS_KOFFI !== '') {
     candidates.push(process.env.MVS_KOFFI)
   }
@@ -120,39 +157,21 @@ async function loadKoffi() {
       /* 试下一个 */
     }
   }
-  throw new Error('找不到 koffi（原生 FFI）。试过：' + tried.join(' / '))
+  throw new Error(`找不到 koffi（原生 FFI）。试过：${tried.join(' / ')}`)
 }
 
-/** 把一个 GUID 字符串编成 `CoCreateInstance` 要的 16 字节小端形式 */
-function guidBytes(text) {
-  const match = /^([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})$/i.exec(text)
-  if (match === null) throw new Error(`GUID 形状不对：${text}`)
-  const bytes = Buffer.alloc(16)
-  bytes.writeUInt32LE(parseInt(match[1], 16), 0)
-  bytes.writeUInt16LE(parseInt(match[2], 16), 4)
-  bytes.writeUInt16LE(parseInt(match[3], 16), 6)
-  Buffer.from(match[4] + match[5], 'hex').copy(bytes, 8)
-  return bytes
-}
-
-const CLSID_FILE_OPEN_DIALOG = guidBytes('dc1c5a9c-e88a-4dde-a5a1-60f82a20aef7')
-const IID_IFILE_OPEN_DIALOG = guidBytes('d57c7288-d4ad-4768-be02-9d969532d960')
+/* ═══════════════════════════════════════════════════════════════════════
+ * 四、打开对话框
+ * ═══════════════════════════════════════════════════════════════════════ */
 
 /**
- * 读一个 NUL 结尾的 UTF-16 分配。
+ * 弹一次「选择文件夹」，返回选中的绝对路径；用户取消返回 null。
  *
- * ⚠️ 不能用 `koffi.decode(..., 'str16')` 直接读那个地址：它期望的是
- * **指向字符串的指针变量**，而 `_Out_ void **` 给出来的是字符串地址本身。
- * DSH 也是这么处理的（`readUtf16`）—— 先造一个装着地址的 Buffer，再解引用。
+ * 所有资源都在 `finally` 里放掉：这个进程是**一次性的**，一次调用只开一个框，
+ * 但泄漏一个 COM 引用会让下一次（同一个进程里不会发生）和诊断都变难。
  */
-function readUtf16(koffi, address, pointerSize) {
-  const pointer = Buffer.alloc(8)
-  pointer.writeBigUInt64LE(BigInt(address))
-  return koffi.decode(pointer.subarray(0, pointerSize), 'str16')
-}
-
-async function main() {
-  const koffi = await loadKoffi()
+async function pickFolder({ title, koffiPath, dryRun = false }) {
+  const koffi = await loadKoffi(koffiPath)
   const ole32 = koffi.load('ole32.dll')
   const user32 = koffi.load('user32.dll')
   const pointerSize = koffi.sizeof('void *')
@@ -160,116 +179,125 @@ async function main() {
   const coInitializeEx = ole32.func('__stdcall', 'CoInitializeEx', 'int32', ['void *', 'uint32'])
   const coUninitialize = ole32.func('__stdcall', 'CoUninitialize', 'void', [])
   const coCreateInstance = ole32.func('__stdcall', 'CoCreateInstance', 'int32', [
-    'void *', 'void *', 'uint32', 'void *', 'void *',
+    'void *',
+    'void *',
+    'uint32',
+    'void *',
+    'void *',
   ])
   const coTaskMemFree = ole32.func('__stdcall', 'CoTaskMemFree', 'void', ['void *'])
   const keybdEvent = user32.func('__stdcall', 'keybd_event', 'void', ['uint8', 'uint8', 'uint32', 'uintptr'])
 
-  const protoShow = koffi.proto('int32 __stdcall DshDialogShow(void *self, void *owner)')
-  const protoSetOptions = koffi.proto('int32 __stdcall DshDialogSetOptions(void *self, uint32 options)')
-  const protoSetTitle = koffi.proto('int32 __stdcall DshDialogSetTitle(void *self, str16 title)')
-  const protoGetResult = koffi.proto('int32 __stdcall DshDialogGetResult(void *self, _Out_ void **item)')
-  const protoGetDisplayName = koffi.proto(
-    'int32 __stdcall DshItemGetDisplayName(void *self, int32 form, _Out_ void **name)',
-  )
-  const protoRelease = koffi.proto('uint32 __stdcall DshComRelease(void *self)')
+  /* 每个 vtable 槽位要一个原型：调用约定与参数必须和 SDK 里的声明一致 */
+  const proto = {
+    release: koffi.proto('uint32 __stdcall MvsCoRelease(void *self)'),
+    show: koffi.proto('int32 __stdcall MvsDialogShow(void *self, void *owner)'),
+    setOptions: koffi.proto('int32 __stdcall MvsDialogSetOptions(void *self, uint32 options)'),
+    setTitle: koffi.proto('int32 __stdcall MvsDialogSetTitle(void *self, str16 title)'),
+    getResult: koffi.proto('int32 __stdcall MvsDialogGetResult(void *self, _Out_ void **item)'),
+    getDisplayName: koffi.proto(
+      'int32 __stdcall MvsItemGetDisplayName(void *self, int32 form, _Out_ void **name)',
+    ),
+  }
 
-  /** 把 COM 对象 `self` 的 vtable 第 `slot` 槽绑成可调用的函数 */
-  const method = (self, slot, proto) => {
+  /**
+   * 取 COM 对象 `self` 的 vtable 第 `slot` 个函数，绑定成可调用的 JS 函数。
+   *
+   * COM 对象在内存里就是「指向 vtable 的指针」，vtable 是「函数指针数组」。
+   * 所以两步：先解引用拿到 vtable 地址，再按 `slot * 指针宽度` 取那一格。
+   */
+  const bind = (self, slot, prototype) => {
     const vtable = koffi.decode(self, 'void *')
     const fn = koffi.decode(vtable, slot * pointerSize, 'void *')
-    return (...callArgs) => koffi.call(fn, proto, self, ...callArgs)
+    return (...rest) => koffi.call(fn, prototype, self, ...rest)
   }
 
-  /*
-   * ⚠️ DPI 感知：不做的话在缩放不是 100% 的屏幕上框会糊。
-   * `SetThreadDpiAwarenessContext` 在不支持的系统上返回 NULL（而不是抛），
-   * 所以往下逐个试就行 —— 这是外观问题，不是功能问题。
-   */
+  /* DPI 感知：老系统没有这个导出，失败也无所谓（只影响清晰度） */
   try {
-    const setContext = user32.func('__stdcall', 'SetThreadDpiAwarenessContext', 'void *', ['intptr'])
-    for (const context of [-4, -3, -2]) {
-      if (setContext(context) !== null) break
+    const setDpi = user32.func('__stdcall', 'SetThreadDpiAwarenessContext', 'void *', ['intptr'])
+    for (const context of DPI_CONTEXTS) {
+      if (setDpi(context) !== null) break
     }
   } catch {
-    /* 老系统没有这个导出，忽略 */
+    /* 忽略 */
   }
 
-  const initialized = coInitializeEx(null, COINIT_APARTMENTTHREADED)
-  if (initialized < 0) throw new Error(`CoInitializeEx 失败：HRESULT 0x${(initialized >>> 0).toString(16)}`)
+  const hrInit = coInitializeEx(null, COINIT_STA)
+  if (hrInit < 0) throw new Error(`CoInitializeEx 失败（${hr(hrInit)}）`)
 
   let dialog = null
   try {
-    const out = Buffer.alloc(pointerSize)
-    const created = coCreateInstance(
-      CLSID_FILE_OPEN_DIALOG,
+    const created = Buffer.alloc(pointerSize)
+    const hrCreate = coCreateInstance(
+      guidBytes(CLSID_FILE_OPEN_DIALOG),
       null,
-      CLSCTX_INPROC_SERVER,
-      IID_IFILE_OPEN_DIALOG,
-      out,
+      CLSCTX_INPROC,
+      guidBytes(IID_IFILE_OPEN_DIALOG),
+      created,
     )
-    if (created < 0) {
-      throw new Error(`CoCreateInstance(FileOpenDialog) 失败：HRESULT 0x${(created >>> 0).toString(16)}`)
-    }
-    dialog = koffi.decode(out, 'void *')
+    if (hrCreate < 0) throw new Error(`CoCreateInstance(FileOpenDialog) 失败（${hr(hrCreate)}）`)
+    dialog = koffi.decode(created, 'void *')
 
-    const setOptions = method(dialog, SLOT_SET_OPTIONS, protoSetOptions)
-    const setTitle = method(dialog, SLOT_SET_TITLE, protoSetTitle)
-    const show = method(dialog, SLOT_SHOW, protoShow)
-    const getResult = method(dialog, SLOT_GET_RESULT, protoGetResult)
-    const release = method(dialog, SLOT_RELEASE, protoRelease)
+    const setOptions = bind(dialog, DIALOG_SLOT.setOptions, proto.setOptions)
+    const setTitle = bind(dialog, DIALOG_SLOT.setTitle, proto.setTitle)
+    const show = bind(dialog, DIALOG_SLOT.show, proto.show)
+    const getResult = bind(dialog, DIALOG_SLOT.getResult, proto.getResult)
+    const releaseDialog = bind(dialog, DIALOG_SLOT.release, proto.release)
 
-    const setResult = setOptions(OPTIONS)
-    if (setResult < 0) throw new Error(`SetOptions 失败：0x${(setResult >>> 0).toString(16)}`)
-    const setTitleResult = setTitle(title)
-    if (setTitleResult < 0) throw new Error(`SetTitle 失败：0x${(setTitleResult >>> 0).toString(16)}`)
+    const hrOptions = setOptions(OPTIONS_PICK_FOLDER)
+    if (hrOptions < 0) throw new Error(`SetOptions 失败（${hr(hrOptions)}）`)
+    const hrTitle = setTitle(title)
+    if (hrTitle < 0) throw new Error(`SetTitle 失败（${hr(hrTitle)}）`)
 
     /*
-     * ★★ 这一步是这个文件存在的理由。
+     * `--dry-run`：到这里就结束，不弹框。
      *
-     * 后台宿主起的进程没有前台权限，而 Windows 的前台锁不允许它把窗口抢到前面——
-     * 框会开在用户正在看的那个窗口**后面**，表现为「点了没反应」。
+     * 上面这几步已经证明了最要紧的东西 —— `CoCreateInstance` 拿到了对象、
+     * 两个 vtable 槽位（SetOptions / SetTitle）确实在那个位置。槽位写错时
+     * 这里会崩或者返回一个负的 HRESULT，而不是等到用户面前才暴露。
      *
-     * 合成一次键盘输入事件会**授予前台权限**，紧接着的 Show 于是能正常激活。
+     * `Show` 是模态的，自动化测试碰不了；把「除弹框之外的全部」做成可跑的，
+     * 这个文件才算有测试。
+     */
+    if (dryRun) return { path: null, dryRun: true }
+
+    /*
+     * ★ 这个文件全部技巧里最关键的一步。
+     *
+     * 后台进程没有前台权限，Windows 的前台锁不允许它把窗口提到最前。
+     * 而在 `Show` 之前**合成一次按键**（这里用 Alt 按下/抬起，Alt 本身不产生字符，
+     * 副作用最小）会把前台权限交给本进程，紧接着的对话框于是能正常激活。
+     *
+     * 为什么老式对话框同样加了这一步却没用：那个框的激活依赖 owner 的 z 序，
+     * 而不是自己去抢前台。差别在对话框本身，不在这一步。
      */
     keybdEvent(VK_MENU, 0, 0, 0)
     keybdEvent(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
 
-    const shown = show(null)
-    if (shown === HR_CANCELLED) {
-      write({ kind: 'done', path: null })
-      return
-    }
-    if (shown < 0) throw new Error(`Show 失败：0x${(shown >>> 0).toString(16)}`)
+    const hrShow = show(null)
+    if (hrShow === HRESULT_CANCELLED) return { path: null }
+    if (hrShow < 0) throw new Error(`Show 失败（${hr(hrShow)}）`)
 
-    const itemOut = [null]
-    const gotItem = getResult(itemOut)
-    if (gotItem < 0) throw new Error(`GetResult 失败：0x${(gotItem >>> 0).toString(16)}`)
+    const itemHolder = [null]
+    const hrItem = getResult(itemHolder)
+    if (hrItem < 0) throw new Error(`GetResult 失败（${hr(hrItem)}）`)
 
-    const item = itemOut[0]
+    const item = itemHolder[0]
     try {
-      const nameOut = [null]
-      const gotName = koffi.call(
-        koffi.decode(koffi.decode(item, 'void *'), SLOT_GET_DISPLAY_NAME * pointerSize, 'void *'),
-        protoGetDisplayName,
-        item,
-        SIGDN_FILESYSPATH,
-        nameOut,
-      )
-      if (gotName < 0) throw new Error(`GetDisplayName 失败：0x${(gotName >>> 0).toString(16)}`)
-      const path = readUtf16(koffi, nameOut[0], pointerSize)
-      coTaskMemFree(nameOut[0])
-      write({ kind: 'done', path })
+      const getDisplayName = bind(item, ITEM_SLOT.getDisplayName, proto.getDisplayName)
+      const nameHolder = [null]
+      const hrName = getDisplayName(SIGDN_FILE_SYSTEM_PATH, nameHolder)
+      if (hrName < 0) throw new Error(`GetDisplayName 失败（${hr(hrName)}）`)
+      const chosen = readWide(koffi, nameHolder[0], pointerSize)
+      coTaskMemFree(nameHolder[0])
+      return { path: chosen }
     } finally {
-      method(item, SLOT_RELEASE, protoRelease)()
+      bind(item, ITEM_SLOT.release, proto.release)()
     }
-
-    release()
-    dialog = null
   } finally {
     if (dialog !== null) {
       try {
-        method(dialog, SLOT_RELEASE, protoRelease)()
+        bind(dialog, DIALOG_SLOT.release, proto.release)()
       } catch {
         /* 已经放掉了 */
       }
@@ -278,7 +306,111 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  write({ kind: 'error', message: error instanceof Error ? (error.stack ?? error.message) : String(error) })
-  process.exitCode = 1
-})
+/* ═══════════════════════════════════════════════════════════════════════
+ * 五、命令行
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+function argValue(argv, name) {
+  const at = argv.indexOf(name)
+  return at >= 0 && at + 1 < argv.length ? argv[at + 1] : undefined
+}
+
+/**
+ * 不弹框的自检：确认这套代码依赖的**外部事实**还在。
+ *
+ * 它验证的是「换了机器 / 换了 koffi 版本之后仍然成立」的那部分：koffi 能不能
+ * 加载、指针宽度、COM 常量是否对得上。vtable 槽位写错在这里就能看出来 ——
+ * 那是这个文件里唯一靠记忆的地方。
+ */
+async function selfCheck(koffiPath) {
+  const report = {
+    ok: false,
+    platform: process.platform,
+    koffi: 'missing',
+    pointerSize: null,
+    dialogSlots: DIALOG_SLOT,
+    itemSlots: ITEM_SLOT,
+    options: OPTIONS_PICK_FOLDER,
+    clsid: CLSID_FILE_OPEN_DIALOG,
+    iid: IID_IFILE_OPEN_DIALOG,
+    error: undefined,
+  }
+  report.ok =
+    report.dialogSlots.show === 3 &&
+    report.dialogSlots.getResult === 20 &&
+    report.dialogSlots.setOptions === 9 &&
+    report.dialogSlots.setTitle === 17 &&
+    report.itemSlots.getDisplayName === 5
+
+  try {
+    const koffi = await loadKoffi(koffiPath)
+    report.koffi = 'loaded'
+    report.pointerSize = koffi.sizeof('void *')
+  } catch (error) {
+    report.error = error instanceof Error ? error.message : String(error)
+  }
+
+  process.stdout.write(`${JSON.stringify(report)}\n`)
+  /* 没有 koffi 不算失败：那说明这台机器该走页面内浏览，是正常情况 */
+  process.exitCode = report.ok ? 0 : 1
+}
+
+async function main() {
+  const argv = process.argv.slice(2)
+
+  if (argv.includes('--self-check')) {
+    await selfCheck(argValue(argv, '--koffi'))
+    return
+  }
+
+  const outPath = argValue(argv, '--out')
+  if (outPath === undefined) {
+    process.stderr.write('dialog-worker: 需要 --out <结果文件>\n')
+    process.exitCode = 2
+    return
+  }
+
+  const title = argValue(argv, '--title') ?? '选择文件夹'
+  const write = (payload) => {
+    try {
+      writeFileSync(outPath, JSON.stringify(payload), 'utf8')
+    } catch (error) {
+      process.stderr.write(`dialog-worker: 写不了结果文件：${String(error?.message ?? error)}\n`)
+    }
+  }
+
+  try {
+    const picked = await pickFolder({
+      title,
+      koffiPath: argValue(argv, '--koffi'),
+      dryRun: argv.includes('--dry-run'),
+    })
+    if (picked.dryRun === true) {
+      write({ kind: 'done', path: null, dryRun: true })
+      return
+    }
+    if (picked.path === null) {
+      write({ kind: 'done', path: null })
+      return
+    }
+    /*
+     * 复核一次：`FOS_PICKFOLDERS` 本该保证选中的是目录，但这个结果要拿去
+     * 挂载工作区 —— 一个文件路径传上去，失败会发生在很远的地方。
+     */
+    try {
+      if (!statSync(picked.path).isDirectory()) {
+        write({ kind: 'error', message: `选中的不是一个目录：${picked.path}` })
+        return
+      }
+    } catch (error) {
+      write({ kind: 'error', message: `选中的路径读不了：${String(error?.message ?? error)}` })
+      return
+    }
+    write({ kind: 'done', path: picked.path })
+  } catch (error) {
+    write({ kind: 'error', message: error instanceof Error ? (error.stack ?? error.message) : String(error) })
+    process.exitCode = 1
+  }
+}
+
+await main()

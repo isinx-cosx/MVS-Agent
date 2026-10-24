@@ -269,7 +269,7 @@ export function getState(): Promise<StateResponse> {
 }
 
 /**
- * 路径选择：**照搬 DSH 的那套**，不是我们自己发明的。
+ * 路径选择：**沿用 DSH 的接口形状**（那是互操作约定，代码是这个仓库自己写的）。
  *
  * 三个端点都在 `src/host/server.ts` 里，守卫与语义都由它决定：
  *

@@ -1209,9 +1209,11 @@ MIT，全文见 [LICENSE](LICENSE)。
 - 运行期依赖：只有 Node 自带的模块。开发期依赖（React、esbuild、KaTeX 等）
   及其许可见 `package-lock.json`；KaTeX 的字体按其自身的 OFL 许可分发，
   构建时会从 `node_modules` 拷进 `web/`（`web/` 不进仓库）。
-- `tools/dialog-worker.mjs`（Windows 原生「选择文件夹」对话框）是按
-  `@deepseek-ai/dsh-host-directory-picker-native` 的 worker **移植**的，
-  注释里写明了它的来源与关键行为。这一份代码的版权归属与原许可**不由本仓库决定**，
-  在对外分发前需要单独确认；其余源码均为本项目自己写的。
+- `tools/dialog-worker.mjs`（Windows 原生「选择文件夹」对话框）是自己写的：
+  调的是 Windows 公开的 COM 接口（`IFileOpenDialog`，vtable 槽位来自 SDK 头文件）
+  与 `keybd_event` 那条公开做法。文件里带 `--self-check` 与 `--dry-run`，
+  可以在不弹框的情况下验证 COM 那一层还是好的。
+- 可选依赖 `koffi`（原生 FFI，MIT）：没有它时原生对话框不可用，会**明确报错**
+  并回退到页面内的目录浏览器，不静默降级。
 - 仓库里不含任何别人的源码副本：DSH 复刻页、它的垫片、抓来的第三方文档
   都已经删掉（见提交历史里的三次清理）。

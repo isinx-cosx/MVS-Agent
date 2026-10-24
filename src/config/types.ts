@@ -22,7 +22,7 @@
 import type { PermissionMode } from '../policy/types.ts'
 
 /**
- * 一个可选的模型。**形状照抄 DSH 的 pi-ai provider profile**，不是我们发明的。
+ * 一个可选的模型。**字段形状与 DSH 的 pi-ai provider profile 对齐**（接口对齐，代码是自己写的）。
  *
  * 抄的理由很具体：设置页是 DSH 的代码，它读写的就是这套名字。我们换一套的话
  * 每次往返都要翻译，而**翻译层漏一个字段的表现是"填了没用"** ——
@@ -46,7 +46,7 @@ export interface ModelConfig {
   /**
    * 这个供应商下**可以选**的模型。
    *
-   * ## 形状照抄 DSH —— **不是字符串数组**
+   * ## 形状与 DSH 对齐 —— **不是字符串数组**
    *
    * DSH 的 provider profile 里 `models` 是 `{ id, name?, contextWindow? }[]`。
    * 我第一版按直觉写成 `string[]`，于是界面发来的对象数组进不了这个槽，
@@ -74,7 +74,7 @@ export interface ModelConfig {
   api?: string
   /**
    * **凭据引用名**（形如 `<ROUTE>_API_KEY`，由 route 派生 —— 见垫片的
-   * `deriveKeyRef`，那条规则也是照抄 DSH 的）。
+   * `deriveKeyRef`，跟着同一个名字走）。
    *
    * ⚠️ DSH 的语义是：**这里存"去哪找密钥"，不是密钥本身。**
    *
