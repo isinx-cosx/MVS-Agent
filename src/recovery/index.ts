@@ -11,6 +11,8 @@ import { defaultHomeDir } from '../config/store.ts'
 import { RecoveryGuard } from './guard.ts'
 import { RecoveryManager } from './manager.ts'
 import { RecoveryStore, copyFileWithClone } from './store.ts'
+export { diffText, looksBinary } from './diff.ts'
+export type { DiffHunk, DiffLine, FileDiff, TextDiffResult } from './diff.ts'
 import { DEFAULT_EXCLUDES, changeCount } from './types.ts'
 import type { RecoverableSnapshotOptions } from './types.ts'
 

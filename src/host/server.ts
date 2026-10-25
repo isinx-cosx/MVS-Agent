@@ -676,6 +676,78 @@ export class HostServer {
     // 单独一个端点而不是塞进投影：撤销记录属于**工作区**（工作区里有几千个文件、
     // 几百次工具调用），投影属于会话。而且它只在打开撤销菜单时才要看一眼，
     // 没必要让每次 watch 都背上它。
+    /*
+     * 一条事务的逐行差异。
+     *
+     * 两个形态，同一个端点：
+     *   `?sessionId=&txnId=`           → 改了哪些文件（只有清单与大小）
+     *   `?sessionId=&txnId=&path=a.ts` → 这个文件的 hunks
+     *
+     * 为什么合并成一个端点：前者是后者的索引。而内容级信息**只在点名某个文件时**
+     * 才读 blob —— 一次事务可能改两百个文件，全读进来算差异是浪费。
+     */
+    if (req.method === 'GET' && url.pathname === '/diff') {
+      const sessionId = url.searchParams.get('sessionId')
+      const txnId = url.searchParams.get('txnId')
+      if (sessionId === null || txnId === null) {
+        sendJson(res, 400, { error: '需要 sessionId 与 txnId' })
+        return
+      }
+
+      const target = url.searchParams.get('path')
+      if (target === null) {
+        const files = await this.#runtime.changedFiles(sessionId, txnId)
+        if (files === undefined) {
+          sendJson(res, 404, { error: `未知会话或事务：${sessionId} / ${txnId}` })
+          return
+        }
+        sendJson(res, 200, { txnId, files })
+        return
+      }
+
+      const file = await this.#runtime.fileDiff(sessionId, txnId, target)
+      if (file === undefined || file === null) {
+        /* 会话不存在 / 事务不存在 / 这条事务没改这个文件 —— 对调用方是同一件事 */
+        sendJson(res, 404, { error: `这条事务里没有这个文件的差异：${target}` })
+        return
+      }
+      sendJson(res, 200, { txnId, file })
+      return
+    }
+
+    /*
+     * 会话内容搜索。
+     *
+     * 搜的是**消息**（事件折叠之后的完整句子）—— 事件流里是 token 碎片，
+     * 直接搜会得到断句。返回里带 `stats`，因为「搜不到」和「没搜完」是两件事：
+     * 没有 `stats.truncated` 才算真的搜完了。
+     *
+     * 正则写错 → 400 且说明错在哪，不是「没有匹配」。这条和 `grep` 工具一致。
+     */
+    if (req.method === 'GET' && url.pathname === '/search') {
+      const query = url.searchParams.get('q')
+      if (query === null || query.trim() === '') {
+        sendJson(res, 400, { error: '需要 q（搜索词）' })
+        return
+      }
+
+      const workspace = url.searchParams.get('workspace')
+      const limitRaw = Number(url.searchParams.get('limit') ?? '')
+      const regex = url.searchParams.get('regex')
+
+      try {
+        const result = await this.#runtime.search(query, {
+          ...(workspace === null ? {} : { workspace }),
+          ...(Number.isInteger(limitRaw) && limitRaw > 0 ? { limit: Math.min(limitRaw, 200) } : {}),
+          ...(regex === '1' || regex === 'true' ? { regex: true } : {}),
+        })
+        sendJson(res, 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
     if (req.method === 'GET' && url.pathname === '/transactions') {
       const sessionId = url.searchParams.get('sessionId')
       if (sessionId === null) {
@@ -1842,3 +1914,4 @@ function messageOf(err: unknown): string {
 }
 
 export type { Envelope }
+

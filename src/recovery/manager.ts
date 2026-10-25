@@ -15,8 +15,9 @@
 
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, rm } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm } from 'node:fs/promises'
 import path from 'node:path'
+import { diffText, type FileDiff } from './diff.ts'
 import { diffSnapshots, walkTree } from './snapshot.ts'
 import { RecoveryStore, copyFileWithClone, type JournalEntry } from './store.ts'
 import {
@@ -159,6 +160,109 @@ export class RecoveryManager {
   // -------------------------------------------------------------------------
   // 查询
   // -------------------------------------------------------------------------
+
+  /**
+   * 这条事务改了哪些文件（**只列清单，不算内容**）。
+   *
+   * 为什么清单不带逐行差异：一次事务可能改两百个文件，而界面首先要知道的是
+   * "改了哪些" —— 内容按需再取（`fileDiff`）。这条和 `listTransactions` 里
+   * "先给路径不给数组"是同一个取舍。
+   */
+  async changedFiles(
+    transactionId: string,
+  ): Promise<Array<{ path: string; change: FileDiff['change']; oldSize?: number; newSize?: number }> | null> {
+    const target = (await this.list()).find((txn) => txn.id === transactionId)
+    if (target === undefined) return null
+
+    const before = await this.#store.loadSnapshot(target.before)
+    const after = await this.#store.loadSnapshot(target.after)
+    if (before === null || after === null) return null
+
+    const sizeOf = (entries: Record<string, { size: number }>, rel: string): number | undefined =>
+      entries[rel]?.size
+
+    const out: Array<{ path: string; change: FileDiff['change']; oldSize?: number; newSize?: number }> = []
+    for (const rel of [...target.changes.added].sort()) {
+      out.push({ path: rel, change: 'added', newSize: sizeOf(after.entries, rel) })
+    }
+    for (const rel of [...target.changes.modified].sort()) {
+      out.push({
+        path: rel,
+        change: 'modified',
+        oldSize: sizeOf(before.entries, rel),
+        newSize: sizeOf(after.entries, rel),
+      })
+    }
+    for (const rel of [...target.changes.removed].sort()) {
+      out.push({ path: rel, change: 'removed', oldSize: sizeOf(before.entries, rel) })
+    }
+    return out
+  }
+
+  /**
+   * 单个文件的逐行差异。
+   *
+   * 三种"给不出逐行差异"必须分开说，不能都变成空结果：
+   *   · 这条事务里没有这个文件 → `null`（调用方回 404）
+   *   · 内容是二进制 → `binary: true`
+   *   · 内容已经被回收 → `contentGone: true`
+   */
+  async fileDiff(
+    transactionId: string,
+    relPath: string,
+    options: { maxBytes?: number; context?: number } = {},
+  ): Promise<FileDiff | null> {
+    const target = (await this.list()).find((txn) => txn.id === transactionId)
+    if (target === undefined) return null
+
+    const change: FileDiff['change'] | undefined = target.changes.added.includes(relPath)
+      ? 'added'
+      : target.changes.modified.includes(relPath)
+        ? 'modified'
+        : target.changes.removed.includes(relPath)
+          ? 'removed'
+          : undefined
+    if (change === undefined) return null
+
+    const before = await this.#store.loadSnapshot(target.before)
+    const after = await this.#store.loadSnapshot(target.after)
+    if (before === null || after === null) return null
+
+    const beforeEntry = before.entries[relPath]
+    const afterEntry = after.entries[relPath]
+    const beforeBytes = await this.#readBlob(beforeEntry?.hash)
+    const afterBytes = await this.#readBlob(afterEntry?.hash)
+
+    const result = diffText(beforeBytes, afterBytes, options)
+    const base: FileDiff = {
+      path: relPath,
+      change,
+      ...(beforeEntry === undefined ? {} : { oldSize: beforeEntry.size }),
+      ...(afterEntry === undefined ? {} : { newSize: afterEntry.size }),
+    }
+
+    if (result === null) {
+      return { ...base, contentGone: true }
+    }
+    return {
+      ...base,
+      ...(result.binary ? { binary: true } : {}),
+      ...(result.tooLarge ? { tooLarge: true } : {}),
+      ...(result.binary || result.tooLarge
+        ? {}
+        : { hunks: result.hunks, added: result.added, removed: result.removed }),
+    }
+  }
+
+  /** 读一个 blob。**读不到就返回 null**，由调用方区分"没内容"和"没差异" */
+  async #readBlob(hash: string | undefined): Promise<Buffer | null> {
+    if (hash === undefined) return null
+    try {
+      return await readFile(this.#store.blobPath(hash))
+    } catch {
+      return null
+    }
+  }
 
   async list(): Promise<Transaction[]> {
     const { entries } = await this.#store.readJournal()

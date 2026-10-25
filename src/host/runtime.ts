@@ -54,13 +54,20 @@ import {
   type TransactionSummary,
   type WorkspaceSummary,
 } from '../protocol/types.ts'
-import { createRecovery, RecoveryGuard, type RecoveryManager } from '../recovery/index.ts'
+import {
+  createRecovery,
+  RecoveryGuard,
+  type FileDiff,
+  type RecoveryManager,
+} from '../recovery/index.ts'
 import { PluginLibrary } from '../plugins/index.ts'
 import { SkillLibrary } from '../skills/index.ts'
 import { createDefaultRegistry, JobRegistry, type ToolRegistry } from '../tools/index.ts'
 import { isMaskedApiKey, type LocalModelConfig, type ModelConfig } from '../config/types.ts'
 import { LocalModelSupervisor, missingConfig, type LocalModelStatus } from './local-model.ts'
 import { SessionStore } from './persistence.ts'
+import { rebuildMessages } from '../protocol/projection.ts'
+import { searchSessions, type SearchResult } from './search.ts'
 import { Session, type ModelSelection } from './session.ts'
 
 /** 每个工作区一个会话目录，放在工作区**之外** —— agent 碰不到运行时自己的状态 */
@@ -1380,6 +1387,105 @@ export class Runtime {
    * ⚠️ 顺序要说清楚：**先能看见改了什么，才谈得上决定要不要撤**。
    * （这条函数原来的下游注释写反了 —— 它说"路径在按了撤销之后的报告里"。）
    */
+  /**
+   * 一条事务改过的文件清单（不含内容）。`undefined` = 会话不存在。
+   */
+  async changedFiles(
+    sessionId: string,
+    txnId: string,
+  ): Promise<
+    | Array<{ path: string; change: 'added' | 'modified' | 'removed'; oldSize?: number; newSize?: number }>
+    | undefined
+  > {
+    const recovery = this.#recoveryFor(sessionId)
+    if (recovery === undefined) return undefined
+    const files = await recovery.changedFiles(txnId)
+    return files ?? undefined
+  }
+
+  /**
+   * 单个文件的逐行差异。
+   *
+   * 返回的三种"没有逐行内容"要分开：`binary` / `tooLarge` / `contentGone`。
+   * `undefined` 只表示"这条事务里没这个文件"或"会话不存在" —— 那时上层回 404。
+   */
+  async fileDiff(
+    sessionId: string,
+    txnId: string,
+    relPath: string,
+  ): Promise<FileDiff | null | undefined> {
+    const recovery = this.#recoveryFor(sessionId)
+    if (recovery === undefined) return undefined
+    return await recovery.fileDiff(txnId, relPath)
+  }
+
+  /**
+   * 在会话正文里搜内容。
+   *
+   * 扫的是**消息**（事件折叠之后的完整句子），不是原始事件流 —— 事件里是 token 碎片，
+   * 搜出来是断句。代价是一次投影，换来的是"搜到的东西人能读"。
+   *
+   * 三种"搜不到"分开：真的没有（`stats.truncated` 为空）/ 只扫了一部分
+   * （`truncated` 说明原因）/ 查询不合法（抛错，由上层回 400）。
+   */
+  async search(
+    query: string,
+    options: { workspace?: string; limit?: number; regex?: boolean } = {},
+  ): Promise<SearchResult> {
+    /*
+     * ⚠️ **索引 + 内存，两处都要。**
+     *
+     * 只读 `#appState.sessions` 会漏掉"这个进程里刚建、索引还没落盘"的会话；
+     * 只读内存则会漏掉"重启之后没人打开过"的历史会话，而那正是搜索最想找的东西。
+     *
+     * 说明：最初补这条是因为一次手工验证里看到"扫了 0 个会话"，后来查清那次
+     * **根本没有会话**（`--workspace` 起服务不会自动建会话，要等 `create_session`）。
+     * 所以它不是被复现出来的 bug —— 保留合并是因为两份来源都可能不全。
+     */
+    const byId = new Map<string, { sessionId: string; workspace: string; title: string; at: string }>()
+    for (const record of this.#appState.sessions) {
+      byId.set(record.sessionId, {
+        sessionId: record.sessionId,
+        workspace: record.workspace,
+        title: record.title,
+        at: record.updatedAt,
+      })
+    }
+    for (const sessionId of this.#sessions.keys()) {
+      if (byId.has(sessionId)) continue
+      const entry = this.#sessions.get(sessionId)!
+      byId.set(sessionId, {
+        sessionId,
+        workspace: entry.record.workspace,
+        title: entry.record.title,
+        at: entry.record.updatedAt,
+      })
+    }
+
+    const records = [...byId.values()]
+      .filter((record) => options.workspace === undefined || record.workspace === options.workspace)
+      /* 最近更新的先扫 —— 人多半在找刚说过的东西 */
+      .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+
+    return await searchSessions({
+      sessions: records,
+      query,
+      ...(options.regex === undefined ? {} : { regex: options.regex }),
+      ...(options.limit === undefined ? {} : { limit: options.limit }),
+      messages: async (sessionId) => {
+        const record = byId.get(sessionId)
+        if (record === undefined) return { messages: [], events: 0 }
+        /*
+         * 用**新的** store 读，不复用会话内存里的那一个：搜索要包含磁盘上的全部历史，
+         * 而内存里那个只保证"自己写过的都在"。
+         */
+        const store = new SessionStore(defaultSessionDir(record.workspace, sessionId), sessionId)
+        const { items } = await store.readEvents()
+        return { messages: rebuildMessages(items.map((item) => item.event)), events: items.length }
+      },
+    })
+  }
+
   async listTransactions(
     sessionId: string,
     withPaths = false,

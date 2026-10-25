@@ -2150,3 +2150,153 @@ test('投影里的 cost：没配单价 → 字段不出现（不是 0）', async
     },
   )
 })
+
+/*
+ * ---------------------------------------------------------------------------
+ * 逐行差异与会话搜索
+ * ---------------------------------------------------------------------------
+ */
+
+test('/diff：先给文件清单，点名文件再给 hunks', async () => {
+  await withServer(
+    scriptedModel([
+      call('c1', 'write_file', { path: 'hello.txt', content: '第一行\n第二行\n' }),
+      say('写好了'),
+    ]),
+    async ({ port, token, sessionId }) => {
+      const host = `127.0.0.1:${port}`
+      await raw(port, {
+        method: 'POST',
+        path: '/command',
+        host,
+        token,
+        body: { type: 'user_message', sessionId, text: '写个文件' },
+      })
+
+      /* 等事务出现 —— 事务是"真的产生了变化"的证据 */
+      let txnId: string | undefined
+      for (let i = 0; i < 100 && txnId === undefined; i += 1) {
+        const res = await raw(port, { path: `/transactions?sessionId=${encodeURIComponent(sessionId)}`, host, token })
+        if (res.status === 200) {
+          const parsed = JSON.parse(res.body) as { transactions: Array<{ id: string }> }
+          txnId = parsed.transactions[0]?.id
+        }
+        if (txnId === undefined) await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      assert.ok(txnId !== undefined, '应当产生一个事务')
+
+      const listed = await raw(port, {
+        path: `/diff?sessionId=${encodeURIComponent(sessionId)}&txnId=${encodeURIComponent(txnId)}`,
+        host,
+        token,
+      })
+      assert.equal(listed.status, 200, listed.body)
+      const files = JSON.parse(listed.body) as {
+        files: Array<{ path: string; change: string; newSize?: number }>
+      }
+      const hello = files.files.find((file) => file.path === 'hello.txt')
+      assert.ok(hello !== undefined, `清单里应当有 hello.txt：${listed.body}`)
+      assert.equal(hello.change, 'added')
+
+      const detailed = await raw(port, {
+        path: `/diff?sessionId=${encodeURIComponent(sessionId)}&txnId=${encodeURIComponent(txnId)}&path=hello.txt`,
+        host,
+        token,
+      })
+      assert.equal(detailed.status, 200, detailed.body)
+      const file = JSON.parse(detailed.body) as {
+        file: { change: string; added: number; hunks: Array<{ lines: Array<{ kind: string; text: string }> }> }
+      }
+      assert.equal(file.file.added, 2, `两行都是新增：${detailed.body}`)
+      const kinds = file.file.hunks.flatMap((hunk) => hunk.lines.map((line) => line.kind))
+      assert.ok(kinds.every((kind) => kind === 'add'), `应当全是 add：${kinds.join(',')}`)
+      const texts = file.file.hunks.flatMap((hunk) => hunk.lines.map((line) => line.text))
+      assert.deepEqual(texts, ['第一行', '第二行'])
+    },
+  )
+})
+
+test('/diff：这条事务里没有的文件 → 404，而不是空结果', async () => {
+  await withServer(
+    scriptedModel([
+      call('c1', 'write_file', { path: 'only.txt', content: 'x\n' }),
+      say('好了'),
+    ]),
+    async ({ port, token, sessionId }) => {
+      const host = `127.0.0.1:${port}`
+      await raw(port, {
+        method: 'POST',
+        path: '/command',
+        host,
+        token,
+        body: { type: 'user_message', sessionId, text: '写' },
+      })
+
+      let txnId: string | undefined
+      for (let i = 0; i < 100 && txnId === undefined; i += 1) {
+        const res = await raw(port, { path: `/transactions?sessionId=${encodeURIComponent(sessionId)}`, host, token })
+        if (res.status === 200) {
+          const parsed = JSON.parse(res.body) as { transactions: Array<{ id: string }> }
+          txnId = parsed.transactions[0]?.id
+        }
+        if (txnId === undefined) await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      assert.ok(txnId !== undefined)
+
+      const missing = await raw(port, {
+        path: `/diff?sessionId=${encodeURIComponent(sessionId)}&txnId=${encodeURIComponent(txnId)}&path=${encodeURIComponent('不在这条事务里.txt')}`,
+        host,
+        token,
+      })
+      assert.equal(missing.status, 404, '不在这条事务里的文件不该给 200')
+
+      const noParams = await raw(port, { path: '/diff', host, token })
+      assert.equal(noParams.status, 400, '缺参数是用法错误')
+    },
+  )
+})
+
+test('/search：能搜到刚才说过的内容，并报出扫了多少', async () => {
+  await withServer(
+    scriptedModel([say('好的')]),
+    async ({ port, token, sessionId }) => {
+      const host = `127.0.0.1:${port}`
+      await raw(port, {
+        method: 'POST',
+        path: '/command',
+        host,
+        token,
+        body: { type: 'user_message', sessionId, text: '这里有个特别的词 蓝鲸号 ' },
+      })
+      /* 等事件落盘（搜索读的是磁盘上的日志，不是内存里的会话） */
+      await new Promise((resolve) => setTimeout(resolve, 300))
+
+      const found = await raw(port, { path: `/search?q=${encodeURIComponent('蓝鲸号')}`, host, token })
+      assert.equal(found.status, 200, found.body)
+      const result = JSON.parse(found.body) as {
+        matches: Array<{ sessionId: string; role: string; snippet: string }>
+        stats: { sessions: number; events: number; truncated?: string }
+      }
+      assert.equal(result.matches.length >= 1, true, `应当命中：${found.body}`)
+      assert.equal(result.matches[0]!.sessionId, sessionId)
+      assert.match(result.matches[0]!.snippet, /蓝鲸号/)
+      assert.ok(result.stats.sessions >= 1)
+      assert.ok(result.stats.events >= 1)
+      /* 完全搜完时不该有截断说明 —— 这是"没有"与"没搜完"的分界 */
+      assert.equal(result.stats.truncated, undefined)
+
+      const none = await raw(port, { path: `/search?q=${encodeURIComponent('完全没有的词xyz')}`, host, token })
+      assert.equal(none.status, 200, none.body)
+      const empty = JSON.parse(none.body) as { matches: unknown[]; stats: { sessions: number } }
+      assert.equal(empty.matches.length, 0)
+      assert.ok(empty.stats.sessions >= 1, '搜不到也要说明扫了多少')
+
+      const bad = await raw(port, { path: `/search?q=${encodeURIComponent('([')}&regex=1`, host, token })
+      assert.equal(bad.status, 400, `正则写错应当是 400：${bad.body}`)
+      assert.match(bad.body, /正则/)
+
+      const blank = await raw(port, { path: '/search', host, token })
+      assert.equal(blank.status, 400, '缺 q 是用法错误')
+    },
+  )
+})
