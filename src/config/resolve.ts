@@ -17,6 +17,7 @@ import {
   maskApiKey,
   type AppConfig,
   type MaskedConfig,
+  type Pricing,
   type ModelConfig,
   type WebSearchConfig,
 } from './types.ts'
@@ -27,6 +28,8 @@ export interface Profile {
   model: string
   apiKeyEnv?: string
   includeUsage: boolean
+  /** 单价。不填 = 不知道 —— 界面不显示成本，而不是显示 0 */
+  pricing?: Pricing
   /** 保守的窗口默认。真正生效值还要经过探测 */
   windowTokens: number
 }
@@ -140,6 +143,8 @@ export interface ResolvedConfig {
   /** 来源是 `environment` 时，**具体是哪个环境变量**。变量名不是秘密 */
   apiKeySourceVar?: string
   includeUsage: boolean
+  /** 单价。不填 = 不知道 —— 界面不显示成本，而不是显示 0 */
+  pricing?: Pricing
   /** 采样温度。`undefined` = 不设，请求里不发这个字段 */
   temperature?: number
   /** 输出上限。`undefined` = 不设（**默认就是无上限**，见配置类型上的注释） */
@@ -298,6 +303,9 @@ export function resolveConfig(options: ResolveOptions): ResolvedConfig {
   }
 
   const includeUsage = effective.includeUsage ?? profile.includeUsage
+
+  /* 单价只从用户显式声明的地方取（配置文件 / 供应商段），没有内置价格表 */
+  const pricing = effective.pricing ?? file.model?.pricing
   /*
    * 生成参数：**只从用户显式声明的地方取**（配置文件 / 覆盖项），
    * 没有内置默认值。
@@ -375,6 +383,7 @@ export function resolveConfig(options: ResolveOptions): ResolvedConfig {
     apiKeySource,
     ...(apiKeySourceVar === undefined ? {} : { apiKeySourceVar }),
     includeUsage,
+    ...(pricing === undefined ? {} : { pricing }),
     /* 生成参数：没设就不进这个对象，会话据此决定"发不发这个字段" */
     ...(temperature === undefined ? {} : { temperature }),
     ...(maxTokens === undefined ? {} : { maxTokens }),

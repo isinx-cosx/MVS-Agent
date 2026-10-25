@@ -222,6 +222,20 @@ export type ClientCommand =
    */
   | { type: 'revert'; sessionId: string; txnId: string; force?: boolean }
   /**
+   * **停掉一个后台作业。**
+   *
+   * ## 为什么需要这条命令
+   *
+   * `kill_job` 一直只存在于**工具**层（模型自己能停自己起的），而人没有入口：
+   * 模型起了一个 `npm run dev` 之后，用户要么让它去停，要么重启守护进程。
+   * 可 `JobRegistry.kill()` 早就写好了（连进程树一起杀）。
+   *
+   * 带 `sessionId` 是为了**定位工作区**（作业注册表按工作区一份），
+   * 而真正要杀的是 `jobId`。两者都给，是因为"这个会话起的作业"才是用户
+   * 脑子里的那个东西 —— 但执行时必须落到工作区上。
+   */
+  | { type: 'kill_job'; sessionId: string; jobId: string }
+  /**
    * **人确认了那次结果未知的工具调用，允许这个会话继续。**
    *
    * ## 为什么这条命令必须存在
@@ -393,6 +407,23 @@ export interface SessionProjection {
     cachedTokens?: number
     /** 真的拿到过 usage 的调用次数（不是"调了几次模型"） */
     calls: number
+  }
+  /**
+   * 累计成本 = 用量 × 单价。
+   *
+   * **没有配单价时整个字段不出现** —— 不是 0。一个假的 0 会让人以为
+   * 这个会话不要钱，而那正是用户最容易被骗的地方。
+   */
+  cost?: {
+    /** 输入部分（含缓存命中） */
+    input: number
+    /** 输出部分 */
+    output: number
+    total: number
+    /** ISO 4217 */
+    currency: string
+    /** 缓存命中那部分按什么价算的 —— 填了缓存价才是 separate */
+    cachedPricing: 'separate' | 'same-as-input'
   }
   /**
    * 抗疲劳熔断器状态。

@@ -1238,6 +1238,21 @@ export class HostServer {
         }
 
       // ── 撤销 ──────────────────────────────────────────────────────────
+      /*
+       * 停掉一个后台作业。
+       *
+       * 这条一直缺：`kill_job` 是**工具**（模型能调），而人没有入口。
+       * `undefined` = 会话不存在；`ok: false` = 作业不存在或已结束 ——
+       * 三种情况分开说，不混成一句"失败了"。
+       */
+      case 'kill_job': {
+        const result = this.#runtime.killJob(command.sessionId, command.jobId)
+        if (result === undefined) {
+          return { ok: false, message: `未知会话：${command.sessionId}` }
+        }
+        return result.ok ? { ok: true } : { ok: false, message: result.message }
+      }
+
       case 'revert': {
         const outcome = await this.#runtime.revert(
           command.sessionId,

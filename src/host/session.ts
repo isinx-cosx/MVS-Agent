@@ -38,11 +38,12 @@ import {
   type CompactionOptions,
 } from '../context/types.ts'
 import { collect } from '../model/collect.ts'
+import { computeCost } from '../model/cost.ts'
 import type { Message, ToolCall, Usage } from '../model/types.ts'
 import type { ToolRegistry } from '../tools/registry.ts'
 import type { ToolContext, ToolResult } from '../tools/types.ts'
 import type { JobRegistry } from '../tools/jobs.ts'
-import type { WebSearchConfig } from '../config/types.ts'
+import type { Pricing, WebSearchConfig } from '../config/types.ts'
 import type { Policy } from '../policy/policy.ts'
 import type { PermissionMode } from '../policy/types.ts'
 import type { ModelClient } from '../model/types.ts'
@@ -144,6 +145,11 @@ export interface SessionDeps {
    * 拿上限把它盖掉只会让人看不出模型坏了。
    */
   generation?: { temperature?: number; maxTokens?: number }
+  /**
+   * 单价（每百万 token）。不填 = 不知道 —— 投影里**不会有** `cost` 字段，
+   * 而不是有一个 0（假的 0 会让人以为这个会话不要钱）。
+   */
+  pricing?: Pricing
   /** 不提供时用上面固定的 model / modelName */
   modelProvider?: ModelProvider
   /**
@@ -457,6 +463,24 @@ export class Session {
               calls: this.#totalUsage.calls,
             },
           }),
+      /*
+       * 成本 = 用量 × 单价。
+       *
+       * 没有单价时**整个字段不出现** —— 不是 0。一个假的 0 会让人以为这个会话
+       * 不要钱，而这恰恰是用户最容易被骗的地方。
+       */
+      ...(() => {
+        if (this.#totalUsage.calls === 0) return {}
+        const cost = computeCost(
+          {
+            inputTokens: this.#totalUsage.inputTokens,
+            outputTokens: this.#totalUsage.outputTokens,
+            ...(this.#totalUsage.cachedKnown ? { cachedTokens: this.#totalUsage.cachedTokens } : {}),
+          },
+          this.#deps.pricing,
+        )
+        return cost === undefined ? {} : { cost }
+      })(),
       fatigue: (() => {
         const status = this.#deps.policy.status()
         return {

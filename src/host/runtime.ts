@@ -925,6 +925,11 @@ export class Runtime {
        * 要改就得重启 daemon（或走日后的配置面板）。刻意不每个请求重取 ——
        * 温度在执行中途变化会让同一轮对话的采样行为前后不一致。
        */
+      /*
+       * 单价：会话要用它算成本。传的是**当前快照**，和 `generation` 同一个理由 ——
+       * 会话不该自己去读配置（那会让"改了配置但没重启"这件事各说各话）。
+       */
+      ...(this.#resolved.pricing === undefined ? {} : { pricing: this.#resolved.pricing }),
       ...(this.#resolved.temperature === undefined && this.#resolved.maxTokens === undefined
         ? {}
         : {
@@ -1436,6 +1441,41 @@ export class Runtime {
       pid: job.pid,
       startedAt: job.startedAt,
     }))
+  }
+
+  /**
+   * 停掉一个后台作业。
+   *
+   * `JobRegistry.kill()` 一直存在（连进程树一起杀），但它只被 `kill_job`
+   * **工具**用到 —— 也就是说只有模型能停。人是没有入口的：模型起了
+   * `npm run dev`，用户要么让它去停，要么重启守护进程。这条把它接出来。
+   *
+   * ## 归属
+   *
+   * `sessionId` 只用来**找工作区**（作业注册表按工作区一份）。找到之后
+   * 才看 `jobId` 在不在这个工作区里 —— 不在就如实说"没这个作业"，
+   * 而不是假装成功（那会让人以为停了、其实还在跑）。
+   *
+   * `undefined` = 这个会话不存在；`{ ok: false }` = 作业不存在或已经结束。
+   */
+  killJob(sessionId: string, jobId: string): { ok: boolean; message?: string } | undefined {
+    const workspace = this.getWorkspacePath(sessionId)
+    if (workspace === undefined) return undefined
+    const entry = this.#workspaces.get(workspace)
+    if (entry === undefined) return undefined
+
+    const job = entry.jobs.get(jobId)
+    if (job === undefined) {
+      return { ok: false, message: `这个工作区里没有作业 ${jobId}` }
+    }
+    if (job.exit !== null) {
+      return { ok: false, message: `作业 ${jobId} 已经结束了（退出码 ${job.exit}）` }
+    }
+
+    const killed = entry.jobs.kill(jobId)
+    return killed
+      ? { ok: true }
+      : { ok: false, message: `作业 ${jobId} 没能停掉（进程可能已经退出）` }
   }
 
   /**

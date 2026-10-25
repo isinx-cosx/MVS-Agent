@@ -46,6 +46,14 @@ export interface SnapshotCoverage {
   skippedLinks: string[]
   /** 硬链接（多链接文件；改动会同时影响外部别名，无法按路径隔离） */
   hardLinks: string[]
+  /**
+   * 这次快照**只看这些路径**（相对工作区）。`undefined` = 全树。
+   *
+   * 四个文件工具的目标路径是结构化给的，快照按它收窄 —— 一次 `write_file`
+   * 没必要扫两遍全树。但它同时改变了「这个事务覆盖了什么」这句话的含义，
+   * 所以它必须能被报告出来（见 `describeGaps`）。
+   */
+  narrowedTo?: string[]
 }
 
 export interface Snapshot {

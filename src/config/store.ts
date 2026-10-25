@@ -390,6 +390,46 @@ export function normalizeConfig(rawInput: unknown): NormalizeResult {
     if (typeof source.api === 'string' && source.api !== '') out.api = source.api
     if (typeof source.includeUsage === 'boolean') out.includeUsage = source.includeUsage
     /*
+     * 单价：**只认非负有限数**，写错了就说清是哪一项、值是多少。
+     *
+     * 这里故意不做"写错就当没填"的静默处理：用户填单价就是为了看成本，
+     * 而一个被悄悄忽略的单价会让他以为成本算的是那个价。
+     */
+    if (isRecord(source.pricing)) {
+      const pricing: NonNullable<ModelConfig['pricing']> = {}
+      const fields = ['inputPerMTok', 'outputPerMTok', 'cachedInputPerMTok'] as const
+      for (const field of fields) {
+        const value = source.pricing[field]
+        if (value === undefined) continue
+        if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+          pricing[field] = value
+        } else {
+          warnings.push(
+            `${where}.pricing.${field} 必须是非负数（每百万 token 的价格），` +
+              `实际是 ${JSON.stringify(value)}，已忽略`,
+          )
+        }
+      }
+      const currency = source.pricing.currency
+      if (typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency)) {
+        pricing.currency = currency.toUpperCase()
+      } else if (currency !== undefined) {
+        warnings.push(
+          `${where}.pricing.currency 必须是三字母货币代码（如 USD），` +
+            `实际是 ${JSON.stringify(currency)}，已忽略（按 USD 算）`,
+        )
+      }
+      if (
+        pricing.inputPerMTok !== undefined ||
+        pricing.outputPerMTok !== undefined ||
+        pricing.cachedInputPerMTok !== undefined
+      ) {
+        out.pricing = pricing
+      }
+    } else if (source.pricing !== undefined) {
+      warnings.push(`${where}.pricing 必须是对象，实际是 ${JSON.stringify(source.pricing)}，已忽略`)
+    }
+    /*
      * 生成参数：**范围要在这里校验，不能原样透传**。
      *
      * 温度写成 -1、上限写成 0，服务端会拒绝这次请求 —— 而错误会出现在"某一轮对话

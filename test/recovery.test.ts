@@ -310,15 +310,22 @@ test('restoreLast 撤销最近一次有变化的操作', async () => {
 // 诚实的盲区报告
 // ---------------------------------------------------------------------------
 
-test('排除的目录出现在「本次恢复管不到」里，而不是被悄悄忽略', async () => {
+test('全树事务：排除的目录出现在「本次恢复管不到」里，而不是被悄悄忽略', async () => {
   await withHarness(
-    async ({ root, guard, ctx, manager }) => {
+    async ({ root, manager }) => {
       await mkdir(path.join(root, 'node_modules'), { recursive: true })
       await writeFile(path.join(root, 'node_modules/dep.js'), 'dep', 'utf8')
       await writeFile(path.join(root, 'app.js'), 'app', 'utf8')
 
-      const txn = await guard.execute('write_file', { path: 'app.js', content: 'changed' }, ctx)
-      const report = await manager.restore(txn.transactionId!)
+      /*
+       * 走 `manager` 而不是 `write_file`：文件工具现在按目标路径**收窄**，
+       * 它压根不会碰到 node_modules，于是这条断言在收窄模式下测不到东西。
+       * 全树路径（`run_command` 那一类）才是这条断言的场景。
+       */
+      const pending = await manager.begin({ tool: 'manual-full-tree' })
+      await writeFile(path.join(root, 'app.js'), 'changed', 'utf8')
+      const txn = await manager.commit(pending)
+      const report = await manager.restore(txn!.id)
 
       assert.ok(
         report.notCovered.some((g) => g.includes('node_modules')),
@@ -329,14 +336,16 @@ test('排除的目录出现在「本次恢复管不到」里，而不是被悄�
   )
 })
 
-test('超过体积上限的文件被跳过，并且被记录', async () => {
+test('全树事务：超过体积上限的文件被跳过，并且被记录', async () => {
   await withHarness(
-    async ({ root, guard, ctx, manager }) => {
+    async ({ root, manager }) => {
       await writeFile(path.join(root, 'big.bin'), 'x'.repeat(5000), 'utf8')
       await writeFile(path.join(root, 'small.txt'), 'ok', 'utf8')
 
-      const txn = await guard.execute('write_file', { path: 'small.txt', content: 'ok2' }, ctx)
-      const report = await manager.restore(txn.transactionId!)
+      const pending = await manager.begin({ tool: 'manual-full-tree' })
+      await writeFile(path.join(root, 'small.txt'), 'ok2', 'utf8')
+      const txn = await manager.commit(pending)
+      const report = await manager.restore(txn!.id)
 
       assert.ok(
         report.notCovered.some((g) => g.includes('big.bin')),

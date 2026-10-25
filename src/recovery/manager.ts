@@ -38,6 +38,14 @@ export interface PendingTransaction {
   tool: string
   summary: string
   before: Snapshot
+  /**
+   * 这次事务只看这些路径（相对工作区）。`undefined` = 全树。
+   *
+   * ⚠️ **begin 与 commit 必须用同一份范围**，否则 diff 会比两棵大小不同的树：
+   * commit 走全树时，before 里缺的那些文件会全被算成「新增」—— 撤销就会删掉
+   * 一堆本来没动过的东西。
+   */
+  only?: string[]
 }
 
 export interface RecoveryStatus {
@@ -83,14 +91,24 @@ export class RecoveryManager {
   // 事务
   // -------------------------------------------------------------------------
 
-  async begin(meta: { tool: string; summary?: string }): Promise<PendingTransaction> {
-    const before = await this.#takeSnapshot()
+  async begin(meta: {
+    tool: string
+    summary?: string
+    /**
+     * 只看这些相对路径。四个文件工具能给出**确切的目标路径**，
+     * 所以它们不必扫全树；`run_command` 给不出（副作用无法从参数推出），
+     * 传 `undefined` 走全树。
+     */
+    only?: string[]
+  }): Promise<PendingTransaction> {
+    const before = await this.#takeSnapshot(meta.only)
     return {
       id: `txn-${randomUUID()}`,
       startedAt: new Date().toISOString(),
       tool: meta.tool,
       summary: meta.summary ?? meta.tool,
       before,
+      ...(meta.only === undefined ? {} : { only: meta.only }),
     }
   }
 
@@ -100,7 +118,8 @@ export class RecoveryManager {
    * 返回 `null` 表示**没有任何文件变化** —— 此时不写日志，因为没有可撤销的东西。
    */
   async commit(pending: PendingTransaction): Promise<Transaction | null> {
-    const after = await this.#takeSnapshot()
+    /* ⚠️ 必须与 begin 用同一个范围 —— 见 `PendingTransaction.only` 的注释 */
+    const after = await this.#takeSnapshot(pending.only)
     const changes = diffSnapshots(pending.before, after)
 
     if (changeCount(changes) === 0) {
@@ -349,7 +368,7 @@ export class RecoveryManager {
   // 内部
   // -------------------------------------------------------------------------
 
-  async #takeSnapshot(): Promise<Snapshot> {
+  async #takeSnapshot(only?: string[]): Promise<Snapshot> {
     const seed = await this.#loadSeed()
 
     const { entries, coverage } = await walkTree({
@@ -357,6 +376,7 @@ export class RecoveryManager {
       excludes: this.#excludes,
       maxFileBytes: this.#maxFileBytes,
       previous: seed,
+      ...(only === undefined ? {} : { only }),
     })
 
     const snapshot: Snapshot = {
@@ -440,6 +460,16 @@ function describeGaps(snapshot: Snapshot): string[] {
   }
   if (snapshot.coverage.skippedLinks.length > 0) {
     gaps.push(`符号链接未跟随（${snapshot.coverage.skippedLinks.length} 个）`)
+  }
+  if (snapshot.coverage.narrowedTo !== undefined && snapshot.coverage.narrowedTo.length > 0) {
+    /*
+     * ⚠️ 这条会出现在"本次恢复管不到"里，措辞要**准确**：
+     * 收窄不是漏了，是这次事务从一开始就只声明这些路径。
+     */
+    gaps.push(
+      `本次事务只覆盖这些路径（文件工具按目标路径收窄，其余路径不在本次范围内）：` +
+        snapshot.coverage.narrowedTo.join('、'),
+    )
   }
   if (snapshot.coverage.hardLinks.length > 0) {
     gaps.push(

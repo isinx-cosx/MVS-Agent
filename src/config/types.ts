@@ -34,6 +34,22 @@ export interface ModelDefinition {
   contextWindow?: number
 }
 
+/**
+ * 单价（每百万 token）。
+ *
+ * 全部可选：**不填就是"不知道"**，界面不显示成本，而不是显示 0。
+ * 单位是「每百万 token」，因为那是供应商报价的通用写法（`$3 / 1M tokens`）。
+ */
+export interface Pricing {
+  /** 输入价（未命中缓存的那部分） */
+  inputPerMTok?: number
+  /** 输出价 */
+  outputPerMTok?: number
+  /** 命中提示缓存的那部分输入价。不填 = 按输入价算（保守取高） */
+  cachedInputPerMTok?: number
+  /** ISO 4217，默认 USD */
+  currency?: string
+}
 export interface ModelConfig {
   /** OpenAI 兼容端点 */
   baseUrl?: string
@@ -102,6 +118,13 @@ export interface ModelConfig {
   contextWindow?: number
   /** 是否请求 usage 尾包。部分兼容网关会拒绝这个字段 */
   includeUsage?: boolean
+  /**
+   * 单价（每百万 token）。**不填 = 不知道** —— 界面据此不显示成本，而不是显示 0。
+   *
+   * 为什么不内置一张价格表：价格是**用户所在地、订阅方式、模型版本**共同决定的，
+   * 内置一张会立刻过期，而过期的价格比没有价格更糟（它会显示一个错数）。
+   */
+  pricing?: Pricing
   /**
    * 采样温度。**不填就不发这个字段** —— 由引擎/服务端自己决定默认值，
    * 比我们在中间替它猜一个更诚实。

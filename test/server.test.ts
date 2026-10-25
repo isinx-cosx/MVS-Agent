@@ -1935,3 +1935,218 @@ test('POST /model-config：`removeProviders` 删得掉，且不碰别的', async
     { configPatch: { version: 1 } },
   )
 })
+
+/*
+ * ---------------------------------------------------------------------------
+ * 作业：人能停掉模型起的后台进程
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * `kill_job` 一直是**工具**（模型能调），而人没有入口：模型起了一个
+ * `npm run dev` 之后，用户要么让它去停，要么重启守护进程 —— 可
+ * `JobRegistry.kill()` 早就写好了（连进程树一起杀）。
+ *
+ * 这条命令把它接出来。三种结果必须分开说，不能混成一句「失败了」：
+ *   会话不存在 / 作业不存在 / 作业已经结束了
+ */
+test('kill_job 命令：能停掉模型起的后台作业，重复停会说明原因', async () => {
+  await withServer(
+    scriptedModel([
+      call('c1', 'run_command', {
+        command: 'node',
+        args: ['-e', 'setTimeout(() => {}, 120000)'],
+        background: true,
+      }),
+      say('在后台跑着'),
+    ]),
+    async ({ port, token, sessionId }) => {
+      const host = `127.0.0.1:${port}`
+      const sent = await raw(port, {
+        method: 'POST',
+        path: '/command',
+        host,
+        token,
+        body: { type: 'user_message', sessionId, text: '起个后台作业' },
+      })
+      assert.equal(sent.status, 200, `发消息失败：${sent.body}`)
+
+      const runningJobId = async (): Promise<string | undefined> => {
+        for (let i = 0; i < 100; i += 1) {
+          const res = await raw(port, {
+            path: `/jobs?sessionId=${encodeURIComponent(sessionId)}`,
+            host,
+            token,
+          })
+          if (res.status === 200) {
+            const parsed = JSON.parse(res.body) as { jobs: Array<{ id: string; running: boolean }> }
+            const running = parsed.jobs.find((job) => job.running)
+            if (running !== undefined) return running.id
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+        return undefined
+      }
+
+      const jobId = await runningJobId()
+      assert.ok(jobId !== undefined, '应当看到一个运行中的作业（模型刚起的那个）')
+
+      const killed = await raw(port, {
+        method: 'POST',
+        path: '/command',
+        host,
+        token,
+        body: { type: 'kill_job', sessionId, jobId },
+      })
+      assert.equal(killed.status, 200)
+      assert.ok(killed.body.includes('"ok":true'), `kill_job 应当成功，实际：${killed.body}`)
+
+      let stopped = false
+      for (let i = 0; i < 100; i += 1) {
+        const res = await raw(port, {
+          path: `/jobs?sessionId=${encodeURIComponent(sessionId)}`,
+          host,
+          token,
+        })
+        const parsed = JSON.parse(res.body) as { jobs: Array<{ id: string; running: boolean }> }
+        if (parsed.jobs.some((job) => job.id === jobId && !job.running)) {
+          stopped = true
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      assert.ok(stopped, '停掉之后作业应当被标记为已结束')
+
+      /* 再停一次：必须说清「已经结束了」，而不是假装成功 */
+      const again = await raw(port, {
+        method: 'POST',
+        path: '/command',
+        host,
+        token,
+        body: { type: 'kill_job', sessionId, jobId },
+      })
+      assert.ok(again.body.includes('已经结束'), `重复停要说清原因，实际：${again.body}`)
+
+      /* 不存在的作业：也说清楚，而不是 ok */
+      const missing = await raw(port, {
+        method: 'POST',
+        path: '/command',
+        host,
+        token,
+        body: { type: 'kill_job', sessionId, jobId: 'job-doesnotexist' },
+      })
+      assert.ok(missing.body.includes('没有作业'), `未知作业要说清楚，实际：${missing.body}`)
+
+      /* 未知会话：另一种失败，不能和上面两种混在一起 */
+      const unknownSession = await raw(port, {
+        method: 'POST',
+        path: '/command',
+        host,
+        token,
+        body: { type: 'kill_job', sessionId: 'no-such-session', jobId },
+      })
+      assert.ok(unknownSession.body.includes('未知会话'), `未知会话要说清楚，实际：${unknownSession.body}`)
+    },
+    { mode: 'full-access' },
+  )
+})
+
+/*
+ * ---------------------------------------------------------------------------
+ * 成本：用量 × 单价，且"不知道"时不给假数
+ * ---------------------------------------------------------------------------
+ */
+
+test('投影里的 cost：配了单价才算，算出来要能对上', async () => {
+  await withServer(
+    scriptedModel([
+      [
+        { type: 'text_delta', text: '好' },
+        { type: 'usage', usage: { inputTokens: 1_000_000, outputTokens: 500_000 } },
+        { type: 'done', reason: 'stop' },
+      ],
+    ]),
+    async ({ port, token, sessionId }) => {
+      await raw(port, {
+        method: 'POST',
+        path: '/command',
+        host: `127.0.0.1:${port}`,
+        token,
+        body: { type: 'user_message', sessionId, text: '随便说点什么' },
+      })
+
+      let cost: { input: number; output: number; total: number; currency: string } | undefined
+      for (let i = 0; i < 100; i += 1) {
+        const res = await raw(port, {
+          path: `/projection?sessionId=${encodeURIComponent(sessionId)}`,
+          host: `127.0.0.1:${port}`,
+          token,
+        })
+        if (res.status === 200) {
+          const parsed = JSON.parse(res.body) as {
+            projection: { cost?: { input: number; output: number; total: number; currency: string } }
+          }
+          if (parsed.projection.cost !== undefined) {
+            cost = parsed.projection.cost
+            break
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+
+      assert.ok(cost !== undefined, '配了单价就该算出成本')
+      assert.equal(cost.input, 3, `输入 100 万 token × $3，实际 ${cost.input}`)
+      assert.equal(cost.output, 6, `输出 50 万 token × $12，实际 ${cost.output}`)
+      assert.equal(cost.total, 9)
+      assert.equal(cost.currency, 'USD')
+    },
+    { configPatch: { version: 1, model: { model: 'x', pricing: { inputPerMTok: 3, outputPerMTok: 12 } } } },
+  )
+})
+
+test('投影里的 cost：没配单价 → 字段不出现（不是 0）', async () => {
+  await withServer(
+    scriptedModel([
+      [
+        { type: 'text_delta', text: '好' },
+        { type: 'usage', usage: { inputTokens: 100, outputTokens: 50 } },
+        { type: 'done', reason: 'stop' },
+      ],
+    ]),
+    async ({ port, token, sessionId }) => {
+      await raw(port, {
+        method: 'POST',
+        path: '/command',
+        host: `127.0.0.1:${port}`,
+        token,
+        body: { type: 'user_message', sessionId, text: '随便说点什么' },
+      })
+
+      let seen = false
+      for (let i = 0; i < 100; i += 1) {
+        const res = await raw(port, {
+          path: `/projection?sessionId=${encodeURIComponent(sessionId)}`,
+          host: `127.0.0.1:${port}`,
+          token,
+        })
+        if (res.status === 200) {
+          const parsed = JSON.parse(res.body) as {
+            projection: { totalUsage?: unknown; cost?: unknown }
+          }
+          /* 等到用量有了，再确认成本**没有** */
+          if (parsed.projection.totalUsage !== undefined) {
+            assert.equal(
+              'cost' in parsed.projection,
+              false,
+              `没有单价时不该出现 cost：${JSON.stringify(parsed.projection.cost)}`,
+            )
+            seen = true
+            break
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      assert.ok(seen, '应当先看到用量')
+    },
+  )
+})

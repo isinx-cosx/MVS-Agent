@@ -28,6 +28,17 @@ export interface WalkOptions {
   /** 上一份快照；命中 size+mtime 时复用其 hash */
   previous?: Snapshot | undefined
   /** true 时忽略 mtime 快路径，强制重算所有 hash */
+  /**
+   * 只看这些**相对路径**（文件或目录）。`undefined` = 走全树。
+   *
+   * 为什么允许收窄：`write_file` / `create_file` / `delete_file` / `edit` 的目标路径
+   * 是**结构化给的**，不需要解析任何命令。而 `run_command` 的副作用无法从参数推出，
+   * 它仍然走全树（不传这个字段）。
+   *
+   * ⚠️ 收窄只影响**扫哪些路径**，不影响"扫到的文件怎么算差异" —— 同一个文件在两种
+   * 模式下必须得到相同的 hash 与 size，这条有对照测试。
+   */
+  only?: string[]
   verify?: boolean
 }
 
@@ -37,7 +48,7 @@ export interface WalkResult {
 }
 
 export async function walkTree(options: WalkOptions): Promise<WalkResult> {
-  const { root, excludes, maxFileBytes, previous, verify } = options
+  const { root, excludes, maxFileBytes, previous, verify, only } = options
 
   const entries: Record<string, SnapshotEntry> = {}
   const coverage: SnapshotCoverage = {
@@ -47,6 +58,59 @@ export async function walkTree(options: WalkOptions): Promise<WalkResult> {
     hardLinks: [],
   }
   const excludedSeen = new Set<string>()
+
+  /**
+   * 记一个文件（stat + 可能算 hash）。
+   *
+   * 抽成独立函数是因为它现在有两个入口：**全树遍历**（`visit` 遇到文件时）和
+   * **收窄模式**（直接对这些路径调用）。两处必须是同一份逻辑 —— 否则同一个文件
+   * 在两种模式下得到的 hash / size 可能不一致，而事务的 diff 正建立在这两个数上。
+   */
+  async function recordFile(abs: string, rel: string): Promise<void> {
+    let stats
+    try {
+      stats = await lstat(abs)
+    } catch {
+      return
+    }
+
+    if (stats.size > maxFileBytes) {
+      coverage.skippedLarge.push({ path: rel, size: stats.size })
+      return
+    }
+
+    if (stats.nlink > 1) {
+      // 硬链接是**文件对象的别名**，不是路径的别名。
+      // 还原文一个别名会同时改变另一个，所以这里只记录、不承诺。
+      coverage.hardLinks.push(rel)
+    }
+
+    const cached = previous?.entries[rel]
+    const reuse =
+      verify !== true &&
+      cached !== undefined &&
+      cached.size === stats.size &&
+      cached.mtimeMs === stats.mtimeMs
+
+    let hash: string
+    if (reuse) {
+      hash = cached.hash
+    } else {
+      try {
+        hash = await hashFile(abs)
+      } catch {
+        return
+      }
+    }
+
+    entries[rel] = {
+      path: rel,
+      size: stats.size,
+      mtimeMs: stats.mtimeMs,
+      hash,
+      mode: stats.mode,
+    }
+  }
 
   async function visit(dirAbs: string, relPrefix: string): Promise<void> {
     let dirents
@@ -81,53 +145,49 @@ export async function walkTree(options: WalkOptions): Promise<WalkResult> {
 
       if (!dirent.isFile()) continue
 
-      let stats
-      try {
-        stats = await lstat(abs)
-      } catch {
-        continue
-      }
-
-      if (stats.size > maxFileBytes) {
-        coverage.skippedLarge.push({ path: rel, size: stats.size })
-        continue
-      }
-
-      if (stats.nlink > 1) {
-        // 硬链接是**文件对象的别名**，不是路径的别名。
-        // 还原文一个别名会同时改变另一个，所以这里只记录、不承诺。
-        coverage.hardLinks.push(rel)
-      }
-
-      const cached = previous?.entries[rel]
-      const reuse =
-        verify !== true &&
-        cached !== undefined &&
-        cached.size === stats.size &&
-        cached.mtimeMs === stats.mtimeMs
-
-      let hash: string
-      if (reuse) {
-        hash = cached.hash
-      } else {
-        try {
-          hash = await hashFile(abs)
-        } catch {
-          continue
-        }
-      }
-
-      entries[rel] = {
-        path: rel,
-        size: stats.size,
-        mtimeMs: stats.mtimeMs,
-        hash,
-        mode: stats.mode,
-      }
+      await recordFile(abs, rel)
     }
   }
 
-  await visit(root, '')
+  if (only !== undefined) {
+    /*
+     * 把收窄范围记进 coverage —— 它不是实现细节：`describeGaps` 要据此告诉用户
+     * 「这次事务只看了这些路径」。收窄而不说，等于把"撤销能覆盖全部变化"这个
+     * 承诺偷偷改小。
+     */
+    coverage.narrowedTo = [...only]
+    /*
+     * 收窄模式：只碰这些路径。
+     *
+     * 每个条目要么是文件（记一条），要么是目录（递归它）。**不存在的路径直接跳过**
+     * —— 删除的场景由"after 里没有它"体现，diff 会算成 removed。
+     */
+    for (const rel of only) {
+      const normalized = rel.split(path.sep).join("/").replace(/^\.\/+/, "")
+      if (normalized === "" || normalized.startsWith("..")) continue
+      /*
+       * 排除规则在收窄模式下**同样生效**：目标落在 `node_modules` / `.git` 里的
+       * 文件不该因为"它被点名了"就进快照 —— 那些目录被排除的理由（体积、噪音、
+       * 版本库自身的元数据）和扫描方式无关。
+       */
+      const segments = normalized.split("/")
+      const excluded = segments.find((segment) => excludes.has(segment))
+      if (excluded !== undefined) {
+        excludedSeen.add(excluded)
+        continue
+      }
+      const abs = path.join(root, normalized)
+      let info
+      try { info = await lstat(abs) } catch { continue }
+      if (info.isDirectory()) {
+        await visit(abs, normalized)
+      } else if (info.isFile()) {
+        await recordFile(abs, normalized)
+      }
+    }
+  } else {
+    await visit(root, '')
+  }
 
   coverage.excludedDirs = [...excludedSeen].sort()
   coverage.skippedLarge.sort((a, b) => (a.path < b.path ? -1 : 1))

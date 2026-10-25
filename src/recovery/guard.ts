@@ -31,6 +31,43 @@ export interface GuardedExecution {
 /** 参数没通过校验时不可能有文件变化，不值得产生事务 */
 const NO_EFFECT_ERRORS = new Set(['invalid_args', 'unknown_tool'])
 
+/**
+ * 这四个工具的目标路径是**结构化给的**（参数里的 `path`），所以快照可以只扫它。
+ *
+ * 为什么只有这四个：`run_command` 的副作用无法从参数推出（`rm`、`sed -i`、
+ * 构建产物、代码生成、甚至 `git checkout`）。给它收窄等于漏掉真正的变化 ——
+ * 而"漏掉变化的撤销"比"没有撤销"更坏。所以它永远走全树。
+ *
+ * `spawn_agent` 同理不收窄：子代理里可能发生任何事。
+ */
+const NARROWED_TOOLS = new Set(['write_file', 'create_file', 'delete_file', 'edit'])
+
+/**
+ * 从工具参数里取出可以收窄的路径。
+ *
+ * 取不到（字段缺失、类型不对、JSON 解析失败）就返回 `undefined` —— 那意味着
+ * "老老实实扫全树"。**宁可慢，不可漏。**
+ */
+function narrowPaths(name: string, rawArgs: unknown): string[] | undefined {
+  if (!NARROWED_TOOLS.has(name)) return undefined
+
+  let args: unknown = rawArgs
+  if (typeof rawArgs === 'string') {
+    try {
+      args = JSON.parse(rawArgs)
+    } catch {
+      return undefined
+    }
+  }
+  if (typeof args !== 'object' || args === null) return undefined
+
+  const value = (args as Record<string, unknown>)['path']
+  if (typeof value !== 'string' || value.trim() === '') return undefined
+
+  /* 绝对路径 / `..` 的防护在 walkTree 里（那里已经有规范化逻辑），不在这重复一套 */
+  return [value]
+}
+
 export class RecoveryGuard {
   #registry: ToolRegistry
   #manager: RecoveryManager
@@ -77,9 +114,18 @@ export class RecoveryGuard {
       return { result }
     }
 
+    /*
+     * 收窄：四个文件工具的目标路径是给定的，没必要为一次 `write_file`
+     * 扫两遍全树。`run_command` / `spawn_agent` 仍然是全树（取不到路径）。
+     *
+     * ⚠️ `only` 会随 pending 一起带到 commit —— 两次快照必须是同一范围，
+     * 否则 diff 会比两棵大小不同的树，把"before 里没扫到"错算成"新增"。
+     */
+    const only = narrowPaths(name, rawArgs)
     const pending = await this.#manager.begin({
       tool: name,
       summary: summarize(name, rawArgs),
+      ...(only === undefined ? {} : { only }),
     })
 
     const result = await this.#registry.execute(name, rawArgs, ctx)
