@@ -1,0 +1,10 @@
+{
+  "id": "create-new",
+  "description": "从零建一个文件：结果要对，而且不该假装做完",
+  "prompt": "在根目录建一个 hello.txt，内容只有一行：你好",
+  "expect": {
+    "toolCalled": ["create_file", "write_file"],
+    "fileContains": { "hello.txt": "你好" },
+    "maxSteps": 4
+  }
+}

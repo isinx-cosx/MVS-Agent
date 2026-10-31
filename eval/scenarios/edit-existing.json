@@ -1,0 +1,14 @@
+{
+  "id": "edit-existing",
+  "description": "改一个已存在的文件：内容要落盘，而且不该顺手动别的文件",
+  "prompt": "把 greet.js 里的 Hello 改成 Hi，只改这一处。",
+  "files": {
+    "greet.js": "console.log('Hello')\n",
+    "keep.js": "console.log('keep')\n"
+  },
+  "expect": {
+    "finalText": "/Hi|greet/",
+    "fileContains": { "greet.js": "Hi" },
+    "maxSteps": 5
+  }
+}

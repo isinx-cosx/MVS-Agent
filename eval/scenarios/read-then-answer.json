@@ -1,0 +1,13 @@
+{
+  "id": "read-then-answer",
+  "description": "读文件并据此回答：必须真的读过，而不是凭印象说",
+  "prompt": "读一下 notes.txt，然后用一句话告诉我里面写的项目代号是什么。",
+  "files": {
+    "notes.txt": "项目代号：蓝鲸号\n负责人：小周\n"
+  },
+  "expect": {
+    "toolCalled": ["read_file", "grep"],
+    "finalText": "蓝鲸号",
+    "maxSteps": 4
+  }
+}

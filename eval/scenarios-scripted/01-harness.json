@@ -1,0 +1,15 @@
+{
+  "id": "01-harness-alive",
+  "description": "自检：脚本化模型会先调一次 read_file，然后给一句收尾。这条验的是**工具链**，不是模型",
+  "prompt": "随便看看这个目录。",
+  "files": {
+    "README.md": "自检用的工作区\n"
+  },
+  "expect": {
+    "toolCalled": ["read_file"],
+    "toolNotCalled": ["run_command"],
+    "finalText": "看完了",
+    "maxSteps": 2,
+    "noApproval": true
+  }
+}

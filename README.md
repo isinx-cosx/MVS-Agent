@@ -880,9 +880,15 @@ node src/cli/chat.ts --base-url http://127.0.0.1:8787/v1 --model fake "你好"  
 ```bash
 npm test        # 292 个用例（1 个在无法建符号链接的机器上跳过）
 npm run typecheck
+npm run eval    # 行为评估（见 docs/行为评估.md）—— 没有模型时用自检：
+                # npm run eval -- --scripted --scenarios eval/scenarios-scripted
 ```
 
-模型层通过**注入 fetch** 替换网络层，工具层在 `test/` 下的临时工作区里跑，走的是和线上完全相同的代码路径。没有这个，你以后每调一次 bug 都要烧一次 token，或者弄脏真实文件。
+模型层通过**注入 fetch** 替换网络层，工具层在 `test/` 下的临时工作区里跑，走的是和线上完全相同的代码路径。
+
+**
+pm test 与 
+pm run eval 分工不同**：前者守代码正确性（给定输入，函数返回什么），后者守行为（给它一个任务，它有没有按能接受的方式做完）。改提示词、换压缩比例、接新模型时，只有后者会告诉你 agent 变好了还是变坏了。没有这个，你以后每调一次 bug 都要烧一次 token，或者弄脏真实文件。
 
 > **关于 `--test-isolation=none`**：`node --test` 默认会为每个测试文件 spawn 子进程并用管道捕获输出；在受限沙箱环境下这会 `EPERM`。这个 flag 让测试全部在单进程内跑，避开 spawn。普通环境下直接 `node --test test/` 也可以。
 

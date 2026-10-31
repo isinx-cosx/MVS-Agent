@@ -1,0 +1,12 @@
+{
+  "id": "02-no-changes",
+  "description": "自检：只读不该产生可撤销事务（收窄与归属的底线）",
+  "prompt": "只读，不要改任何东西。",
+  "files": {
+    "README.md": "自检用的工作区\n"
+  },
+  "expect": {
+    "toolCalled": ["read_file"],
+    "maxSteps": 2
+  }
+}
