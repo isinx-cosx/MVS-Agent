@@ -209,8 +209,13 @@ test('★ workspace-write 下只读命令自动放行，有副作用的照常问
   const test = judge('workspace-write', 'npm test')
   assert.equal(test.decision, 'ask', '跑测试会执行任意代码，必须照常问')
 
+  /*
+   * 删除命令现在是**直接拒绝**（不是询问）：要删东西走 `delete_paths`。
+   * 这条改动见 `docs/破坏性与资源护栏.md` —— 拒绝文案会教路。
+   */
   const rm = judge('workspace-write', 'rm -rf build')
-  assert.equal(rm.decision, 'ask')
+  assert.equal(rm.decision, 'deny')
+  assert.match(rm.message ?? '', /delete_paths/)
 })
 
 test('★ 只读模式是硬天花板：连只读命令也不放行', () => {

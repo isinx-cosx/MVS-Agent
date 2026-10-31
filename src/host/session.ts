@@ -39,6 +39,8 @@ import {
 } from '../context/types.ts'
 import { collect } from '../model/collect.ts'
 import { computeCost } from '../model/cost.ts'
+import { describeHits, isSensitivePath, scanText } from '../guard/scan.ts'
+import { shouldScanOutput, writtenPaths, type TaintStore } from '../guard/review.ts'
 import type { Message, ToolCall, Usage } from '../model/types.ts'
 import type { ToolRegistry } from '../tools/registry.ts'
 import type { ToolContext, ToolResult } from '../tools/types.ts'
@@ -150,6 +152,13 @@ export interface SessionDeps {
    * 而不是有一个 0（假的 0 会让人以为这个会话不要钱）。
    */
   pricing?: Pricing
+  /**
+   * 输出审核的 taint 表（按工作区一份）。
+   *
+   * 不提供时审核退化成"只打码、不拦截修改" —— 那仍然有用（日志不被污染），
+   * 但少了"模型没看过就不许盲改"这条。
+   */
+  taint?: TaintStore
   /** 不提供时用上面固定的 model / modelName */
   modelProvider?: ModelProvider
   /**
@@ -1066,8 +1075,26 @@ export class Session {
    */
   #systemText(): string {
     const base = this.#deps.system ?? ''
-    if (this.#deps.skills === undefined) return base
-    return `${base}\n\n${skillPromptBlock()}`
+    /*
+     * 工具边界要写在系统提示里，不能只靠 deny 规则的文案。
+     *
+     * 理由：规则命中时模型只看到"被拒绝"，它很可能换一种写法重试（`del` 换成
+     * `rd`、`rm` 换成 `node -e fs.rmSync`）。先告诉它该走哪条路，比事后一条条
+     * 拦下来省得多 —— 而且那条路本来就更安全：有路径围栏、有可显示的影响面、
+     * 进恢复层事务可撤销。
+     */
+    const boundary = [
+      '## 工具边界',
+      '',
+      '- 改文件系统**不要用 `run_command`**：删除用 `delete_paths`，移动/重命名用 `move_path`。',
+      '  它们有路径围栏、会把影响面显示给人看、并且能撤销；`rm` / `del` / `mv` 这些会被直接拒绝。',
+      '- `run_command` 用来跑构建、跑测试、跑工具 —— 不承担改文件系统的职责。',
+      '- 删目录必须显式给 `recursive: true`；不确定影响面时先给 `dryRun: true` 看统计。',
+    ].join('\n')
+
+    const parts = [base, boundary]
+    if (this.#deps.skills !== undefined) parts.push(skillPromptBlock())
+    return parts.filter((part) => part !== '').join('\n\n')
   }
 
   async #spawnAgent(input: {
@@ -1255,27 +1282,119 @@ export class Session {
       /* 子代理能力由会话注入（工具层不自己造会话）*/
       spawnAgent: (agentInput) => this.#spawnAgent(agentInput),
     }
+    /*
+     * ★ taint 拦截：**模型没看过内容的文件，不许盲改**。
+     *
+     * 盲改一个含密钥的配置（`.env`、`config.json`）几乎必然删掉用户需要的东西 ——
+     * 拦它是在保护文件，不是惩罚。出口是 `clear_taint`（或 CLI 的 clear）。
+     *
+     * 这一道放在**执行之前**：既省一次写，也不产生垃圾事务。
+     */
+    /* argsJson 是模型给的原始 JSON 串：解析失败就当没参数（拦不住，也看不出来） */
+    let parsedArgs: unknown = undefined
+    try {
+      parsedArgs = JSON.parse(call.argsJson)
+    } catch {
+      parsedArgs = undefined
+    }
+
+    if (this.#deps.taint !== undefined) {
+      const targets = writtenPaths(call.name, parsedArgs)
+      for (const rel of targets) {
+        const record = await this.#deps.taint.has(rel)
+        if (record === undefined) continue
+        return await this.#settle(
+          call,
+          false,
+          `tainted_path：${rel} 的内容曾经被扣留过（${record.category}），模型没有看过它 —— ` +
+            '直接改会破坏你看过的内容之外的东西。要改它，先解除限制（clear_taint）让它被看见一次，或者你自己改。',
+        )
+      }
+    }
+
     const { result, transactionId } = await this.#deps.executor.execute(
       call.name,
       call.argsJson,
       ctx,
     )
 
-    const summary = result.ok
-      ? firstLine(result.content)
-      : `${result.error?.kind ?? 'failed'}：${result.error?.message ?? ''}`
+    /*
+     * ★ 闸门：工具结果**变成消息之前**过一遍扫描。
+     *
+     * 这是"模型能看到什么"的唯一关口 —— 一旦进了事件流，它就已经在投影、
+     * 界面和重放结果里了，之后再打码只是掩耳盗铃。
+     *
+     * 交互式的三选一（人决定放行/打码/扣留）是下一步；现在先保证**默认不漏**：
+     * 命中就打码，并把那个路径记成 taint（模型看到的不是原文，就不该按原文改）。
+     */
+    let reviewed = result
+    if (result.ok && shouldScanOutput(call.name)) {
+      reviewed = await this.#reviewOutput(call.name, result, parsedArgs)
+    }
+
+    const summary = reviewed.ok
+      ? firstLine(reviewed.content)
+      : `${reviewed.error?.kind ?? 'failed'}：${reviewed.error?.message ?? ''}`
 
     await this.#emit({
       type: 'tool_settled',
       callId: call.id,
       tool: call.name,
-      ok: result.ok,
-      content: result.content,
+      ok: reviewed.ok,
+      content: reviewed.content,
       summary,
       ...(transactionId !== undefined ? { recoveryTxnId: transactionId } : {}),
     })
 
-    return result.content
+    return reviewed.content
+  }
+
+  /**
+   * 审一遍工具输出。命中就打码，并把来源路径记成 taint。
+   *
+   * `read_file` 会先看路径分级：`.env` / `id_rsa` / `*.pem` 这类**整份**扣留，
+   * 不依赖内容匹配 —— 分段读取与编码能绕过内容匹配，绕不过路径分类。
+   */
+  async #reviewOutput(
+    tool: string,
+    result: ToolResult,
+    args: unknown,
+  ): Promise<ToolResult> {
+    const relPath =
+      typeof args === 'object' && args !== null && typeof (args as Record<string, unknown>)['path'] === 'string'
+        ? ((args as Record<string, unknown>)['path'] as string)
+        : undefined
+
+    const wholeFile =
+      tool === 'read_file' && relPath !== undefined ? isSensitivePath(relPath) : false
+
+    const scanned = scanText(result.content, {
+      ...(wholeFile ? { wholeFile: true } : {}),
+      ...(relPath === undefined ? {} : { pathHint: relPath }),
+    })
+
+    if (scanned.hits.length === 0) return result
+
+    /*
+     * 记 taint：模型看到的是打码版（或整份被扣），**不是原文**。
+     * 那就不该按"原文"去改它 —— 否则打码串会被写回文件，真值永久丢失。
+     */
+    if (this.#deps.taint !== undefined && relPath !== undefined && tool === 'read_file') {
+      await this.#deps.taint.add(relPath, scanned.hits[0]!.category, '读取时命中敏感内容')
+    }
+
+    const note =
+      `〔输出审核：${describeHits(scanned.hits)} 已打码〕` +
+      (relPath === undefined ? '' : `（来源：${relPath}，该路径已记入 taint，改动会被拒绝）`)
+
+    return {
+      ...result,
+      content: `${note}\n\n${scanned.text}`,
+      data: {
+        ...(typeof result.data === 'object' && result.data !== null ? result.data : {}),
+        redacted: scanned.hits.length,
+      },
+    }
   }
 
   async #settle(call: ToolCall, ok: boolean, content: string): Promise<string> {

@@ -211,41 +211,41 @@ test('熔断器：读保护路径不受影响（只拦写）', () => {
   assert.equal(verdict.decision, 'allow')
 })
 
-test('熔断器：删除关键路径', () => {
-  const cases: Array<[string, string]> = [
-    ['rm -rf /', '文件系统根'],
-    ['rm -rf ..', '工作区的父目录'],
-    ['rm -rf ~', '家目录'],
-    ['rm -rf /tmp/../../', '绕一圈回到根'],
-  ]
-  for (const [cmd, label] of cases) {
+/*
+ * 删除命令：现在是**直接拒绝**，而不是"问一下"。
+ *
+ * 这是一次有意的产品决定（见 `docs/破坏性与资源护栏.md`）：`run_command` 不承担
+ * 改文件系统的职责 —— 要删东西走 `delete_paths`，它有路径围栏、有可显示的影响面、
+ * 且可撤销。拒绝文案必须**教路**，否则模型会换写法重试。
+ *
+ * 静态删除目标分析（关键路径 / 工作区外 / 无法解析）仍然有效，但它现在只在
+ * 没被规则拦下的形态上生效 —— 下面用 `delete_file` 与 `rmtree` 形态覆盖。
+ */
+test('删除命令：rm/del/mv 被直接拒绝，且文案指向结构化工具', () => {
+  const cases = ['rm -rf build', 'rm -f a.txt', 'del /s /q x', 'mv a.txt b.txt', 'git clean -fdx']
+  for (const cmd of cases) {
     const verdict = judge('full-access', command(cmd))
-    assert.equal(verdict.reason, 'critical-path', `${cmd}（${label}）应该命中关键路径熔断`)
-    assert.equal(verdict.decision, 'ask', `${cmd} 不该被自动放行`)
+    assert.equal(verdict.decision, 'deny', `${cmd} 应当被拒绝，实际 ${verdict.decision}`)
+    assert.match(verdict.message ?? verdict.reason, /delete_paths|move_path/, `${cmd} 的拒绝文案要教路`)
   }
 })
 
-test('熔断器：删除工作区之外的东西，无限制模式下也要确认', () => {
+test('删除命令：-EncodedCommand 被拒（人无法评估）', () => {
+  const verdict = judge('workspace-write', command('powershell -EncodedCommand ZABlAGwA'))
+  assert.equal(verdict.decision, 'deny')
+  assert.match(verdict.message ?? '', /base64|无法评估/)
+})
+
+test('静态分析：delete_file 删关键路径仍然命中', () => {
+  const verdict = judge('full-access', req('delete_file', 'write', { path: '..' }))
+  assert.equal(verdict.reason, 'critical-path')
+})
+
+test('静态分析：工作区外的删除目标仍然被识别（rmtree 形态没被规则拦）', () => {
   const outside = path.join(path.parse(ROOT).root, 'somewhere-else', 'data')
-  const verdict = judge('full-access', command(`rm -rf ${outside}`))
+  const verdict = judge('full-access', command(`python -c "import shutil; shutil.rmtree('${outside}')"`))
   assert.equal(verdict.decision, 'ask')
   assert.equal(verdict.reason, 'delete-outside-workspace')
-})
-
-test('熔断器：删除工作区内的东西不触发（否则每次清理构建产物都要问）', () => {
-  const verdict = judge('full-access', command('rm -rf build'))
-  assert.equal(verdict.decision, 'allow')
-  assert.equal(verdict.reason, 'command-default')
-})
-
-test('熔断器：无法静态解析的删除目标按危险处理（rm -rf $HOME）', () => {
-  const verdict = judge('full-access', command('rm -rf $HOME'))
-  assert.equal(
-    verdict.reason,
-    'unresolvable-delete-target',
-    ' $HOME 不像路径，靠「像不像路径」筛会直接漏掉它',
-  )
-  assert.equal(verdict.decision, 'ask')
 })
 
 test('熔断器：delete_file 删关键路径同样命中', () => {
@@ -481,6 +481,17 @@ test('已知边界：无法静态解析的删除会被抓住，但这不是解�
     'full-access',
     req('run_command', 'execute', { command: 'git', args: ['clean', '-fdx'] }),
   )
-  // `git clean` 命中了内置的询问规则，所以这里仍然是 ask —— 这是我们有意加的
-  assert.equal(obfuscated.decision, 'ask')
+  /*
+   * `git clean` 现在命中了**拒绝**规则（它会删未跟踪文件），所以这里是 deny ——
+   * 这仍然钉住了同一条边界：能识别的形态被规则拦住，识别不了的（把路径藏进
+   * 解释器字符串、且不含删除动词）仍然只靠"默认 ask + 恢复层 + 事后审计"。
+   */
+  assert.equal(obfuscated.decision, 'deny')
+
+  /* 真正抓不住的那种：伪装成普通解释器调用，不含任何删除动词 */
+  const hidden = judge(
+    'full-access',
+    req('run_command', 'execute', { command: 'node', args: ['-e', 'require(\'fs\').rmSync(\'x\')'] }),
+  )
+  assert.equal(hidden.decision, 'allow', '这类命令抓不住 —— 靠事后审计与恢复层兜底')
 })

@@ -65,6 +65,7 @@ import { SkillLibrary } from '../skills/index.ts'
 import { createDefaultRegistry, JobRegistry, type ToolRegistry } from '../tools/index.ts'
 import { isMaskedApiKey, type LocalModelConfig, type ModelConfig } from '../config/types.ts'
 import { LocalModelSupervisor, missingConfig, type LocalModelStatus } from './local-model.ts'
+import { TaintStore } from '../guard/review.ts'
 import { SessionStore } from './persistence.ts'
 import { rebuildMessages } from '../protocol/projection.ts'
 import { searchSessions, type SearchResult } from './search.ts'
@@ -90,6 +91,13 @@ export function jobsDirFor(workspace: string): string {
 }
 
 interface WorkspaceEntry {
+  /**
+   * 输出审核的 taint 表，**按工作区一份**。
+   *
+   * 和 skills / jobs 同级：确认状态属于这个工作区，换个工作区就是另一套。
+   * 落盘在 <工作区>/.mvs/taint.json。
+   */
+  taint: TaintStore
   path: string
   recovery: RecoveryManager
   /** 后台作业，按工作区一份。见 `jobs.ts` 顶部那段关于恢复层缺口的说明 */
@@ -726,6 +734,14 @@ export class Runtime {
     )
 
     /* 把安装的插件变成注册表里的工具（全局一份，工具本身不绑定工作区） */
+    /*
+     * 输出审核的 taint 表：按工作区一份，落 `.mvs/taint.json`。
+     *
+     * 它承载的是「模型没看过这个文件的内容」这个跨会话的事实 —— 重启之后仍然成立，
+     * 所以必须落盘，不能只活在内存里。
+     */
+    const taint = TaintStore.forWorkspace(canonical)
+
     this.#syncPluginTools(plugins)
 
     this.#workspaces.set(canonical, {
@@ -735,6 +751,7 @@ export class Runtime {
       executor: new RecoveryGuard(this.#registry, recovery),
       skills,
       plugins,
+      taint,
     })
   }
 

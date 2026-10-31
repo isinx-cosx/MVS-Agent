@@ -236,6 +236,43 @@ export const DEFAULT_DENY_RULES: PolicyRule[] = [
   { pattern: 'run_command:shutdown', decision: 'deny' },
   { pattern: 'run_command:reboot', decision: 'deny' },
   { pattern: 'run_command:Set-ExecutionPolicy', decision: 'deny', note: '改执行策略' },
+
+  /*
+   * 删除与移动：**一律拒，指向结构化工具**。
+   *
+   * 这些条目不是"黑名单能挡住一切"的假设 —— 它挡的是最常见的写法。
+   * 真正的兜底是恢复层：工作区内的删除可以自动还原（见 guard 里的事后审计），
+   * 而这里的价值是**别让它一开始就走错路**，并且把替代路径告诉模型，
+   * 否则它会换着写法重试，白烧几轮。
+   */
+  { pattern: 'run_command:rm -', decision: 'deny', note: '要删文件请用 delete_paths（可撤销、有路径围栏）' },
+  { pattern: 'run_command:rm --', decision: 'deny', note: '要删文件请用 delete_paths' },
+  { pattern: 'run_command:del ', decision: 'deny', note: '要删文件请用 delete_paths' },
+  { pattern: 'run_command:erase ', decision: 'deny', note: '要删文件请用 delete_paths' },
+  { pattern: 'run_command:rd /', decision: 'deny', note: '要删目录请用 delete_paths（recursive: true）' },
+  { pattern: 'run_command:rmdir ', decision: 'deny', note: '要删目录请用 delete_paths' },
+  { pattern: 'run_command:Remove-Item', decision: 'deny', note: '要删文件请用 delete_paths' },
+  { pattern: 'run_command:ri -', decision: 'deny', note: '要删文件请用 delete_paths' },
+  { pattern: 'run_command:mv ', decision: 'deny', note: '要移动文件请用 move_path（可撤销）' },
+  { pattern: 'run_command:move ', decision: 'deny', note: '要移动文件请用 move_path' },
+  { pattern: 'run_command:ren ', decision: 'deny', note: '要重命名请用 move_path' },
+  { pattern: 'run_command:git clean', decision: 'deny', note: '会删未跟踪文件；要清理请用 delete_paths 明确列出' },
+  { pattern: 'run_command:git rm', decision: 'deny', note: '要删文件请用 delete_paths' },
+  { pattern: 'run_command:robocopy', decision: 'deny', note: '/MIR 会清空目标目录' },
+  { pattern: 'run_command:rsync --delete', decision: 'deny', note: '会清空目标目录' },
+  { pattern: 'run_command:find ', decision: 'deny', note: '-delete 会删文件；要删请用 delete_paths' },
+  { pattern: 'run_command:truncate ', decision: 'deny', note: '要清空文件请用 write_file 或 delete_paths' },
+  { pattern: 'run_command:fsutil file setzerodata', decision: 'deny', note: '会清空文件内容' },
+
+  /*
+   * 不能评估的命令不该让人签字。
+   *
+   * `-EncodedCommand` 收的是 base64 的 UTF-16 PowerShell：审批卡上那串东西
+   * 人读不懂，点了"允许"等于盲签。所以直接拒，理由写清楚。
+   */
+  { pattern: 'run_command:powershell -enc', decision: 'deny', note: '命令被 base64 混淆，人无法评估' },
+  { pattern: 'run_command:powershell -EncodedCommand', decision: 'deny', note: '命令被 base64 混淆，人无法评估' },
+  { pattern: 'run_command:frombase64string', decision: 'deny', note: '命令被 base64 混淆，人无法评估' },
 ]
 
 /**

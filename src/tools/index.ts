@@ -14,6 +14,7 @@ import { spawnAgentTool } from './agents.ts'
 import { runCommandTool } from './command-tool.ts'
 import { editTools } from './edit-tool.ts'
 import { fileTools } from './file-tools.ts'
+import { deletePathsTool, movePathTool } from './cleanup-tools.ts'
 import { jobOutputTool, killJobTool, listJobsTool } from './job-tools.ts'
 import { ToolRegistry } from './registry.ts'
 import { searchTools } from './search-tools.ts'
@@ -33,6 +34,16 @@ export function createDefaultRegistry(): ToolRegistry {
      */
     ...searchTools(),
     ...editTools(),
+    /*
+     * 结构化的删除与移动。
+     *
+     * 它们存在的理由只有一个：让"改文件系统"这件事**不经过 shell**。
+     * `run_command` 里的 rm/del/mv 拿不到路径围栏、拿不到可显示的影响面、
+     * 也拿不到可撤销的事务 —— 策略上只能给一个 `ask`，而审批卡上那一行
+     * 动态拼接的字符串往往没法评估。
+     */
+    deletePathsTool,
+    movePathTool,
     /*
      * 网络工具。
      *

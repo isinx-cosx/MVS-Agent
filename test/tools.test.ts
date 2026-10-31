@@ -190,6 +190,8 @@ test('注册表：toModelSchemas 能生成模型用的声明', () => {
     [
       'create_file',
       'delete_file',
+      /* 结构化清理：删除与移动从 shell 里收回来（见 docs/破坏性与资源护栏.md） */
+      'delete_paths',
       /*
        * ★ `edit` / `glob` / `grep` —— 这三个是「能不能在代码库里干活」的分界线。
        *
@@ -206,6 +208,7 @@ test('注册表：toModelSchemas 能生成模型用的声明', () => {
       'job_output',
       'kill_job',
       'list_jobs',
+      'move_path',
       'read_file',
       'run_command',
       /*
