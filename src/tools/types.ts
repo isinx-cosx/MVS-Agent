@@ -214,6 +214,13 @@ export type ToolErrorKind =
   | 'timeout'
   /** 被沙箱拒绝。**与「命令本身失败」不同**：重试同一个命令不会有不同结果。 */
   | 'sandbox'
+  /**
+   * 磁盘剩余空间低于底线，**命令没有启动**。
+   *
+   * 单列的理由：它和命令本身失败是两件事 —— 重试同一个命令不会好，
+   * 得先腾出空间。混进 ailed 会让模型对着一个"总是失败"的命令反复重试。
+   */
+  | 'insufficient_disk'
   | 'failed'
 
 export interface ToolError {

@@ -15,8 +15,8 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { closeSync, openSync } from 'node:fs'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { closeSync, createReadStream, openSync } from 'node:fs'
+import { mkdtemp, rm, stat, statfs, truncate } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { resolveInsideRoot } from './paths.ts'
@@ -30,6 +30,64 @@ import {
   type ToolResult,
 } from './types.ts'
 
+/**
+ * 单个流最多留这么多字节在磁盘上。
+ *
+ * 为什么需要它：`DEFAULT_MAX_OUTPUT_CHARS` 只限制**模型看到多少**，不限制我们
+ * 写多少、读多少。一个 `yes` 跑 30 秒能写出 GB 级临时文件，然后被整个读进内存
+ * —— 守护进程 OOM，会话全丢。这里封的是**磁盘与内存**，不是字符数。
+ *
+ * 超出的部分用 `truncate` 截掉：子进程继续往更大的偏移写，但那一段是稀疏空洞，
+ * 不占实际空间；前 8 MB 保持完整，读回来的就是它。
+ */
+const MAX_CAPTURE_BYTES = 8 * 1024 * 1024
+
+/** 捕获文件的巡检间隔：每 250 ms 看一次大小与磁盘余量 */
+const CAPTURE_WATCH_MS = 250
+
+/**
+ * 磁盘剩余空间的底线。低于它**不启动命令**。
+ *
+ * 理由：命令失败与"磁盘快满了"是两件事 —— 前者重试可能有用，后者重试一定没用，
+ * 而且真跑起来会让恢复层连快照都写不进去（那正是最需要撤销的时候）。
+ */
+const DEFAULT_DISK_FLOOR_BYTES = 2 * 1024 * 1024 * 1024
+/** 一个目录所在卷的剩余字节。拿不到就返回 null —— 不知道不等于零 */
+async function freeBytesOf(dir: string): Promise<number | null> {
+  if (typeof statfs !== 'function') return null
+  try {
+    const info = await statfs(dir)
+    return info.bavail * info.bsize
+  } catch {
+    return null
+  }
+}
+
+function diskFloorBytes(): number {
+  const override = Number(process.env.MVS_DISK_FLOOR_MB ?? '')
+  if (Number.isFinite(override) && override > 0) return override * 1024 * 1024
+  return DEFAULT_DISK_FLOOR_BYTES
+}
+
+/** 把捕获文件截到上限。返回是否真的截过 */
+async function capCaptureFile(file: string, cap: number): Promise<boolean> {
+  try {
+    const info = await stat(file)
+    if (info.size <= cap) return false
+    /*
+     * 只截到 cap，**保留前 cap 字节**。
+     *
+     * 子进程的写偏移不会因为截断而回退，所以它接下来写在更大的偏移上 ——
+     * 中间那段变成稀疏空洞（NTFS 不为其分配簇）。结果是：
+     * 实际占盘 ≈ cap，而"前 cap 字节"永远完整可读。
+     */
+    await truncate(file, cap)
+    return true
+  } catch {
+    /* 文件可能还没创建 / 已被删 —— 巡检本来就是尽力而为 */
+    return false
+  }
+}
 interface RunCommandArgs {
   command: string
   args?: string[]
@@ -113,6 +171,23 @@ export const runCommandTool: Tool<RunCommandArgs> = {
     const file = direct ? args.command : (shell?.[0] ?? args.command)
     const argv = direct ? (args.args ?? []) : (shell?.[1] ?? [])
 
+    /*
+     * 磁盘余量哨兵：**低于底线不启动**。
+     *
+     * 这一条挡不住"命令自己把盘写满"（那是运行中才发生的事，见下面的巡检），
+     * 但它挡得住更常见的一种：磁盘本来就快满了，再跑一条会写文件的命令，
+     * 于是恢复层连快照都写不进去 —— 恰好发生在最需要撤销的时候。
+     */
+    const freeBefore = await freeBytesOf(cwd)
+    const floor = diskFloorBytes()
+    if (freeBefore !== null && freeBefore < floor) {
+      const mb = (n: number): string => `${(n / 1024 / 1024).toFixed(0)} MB`
+      return failResult(
+        'insufficient_disk',
+        `磁盘剩余 ${mb(freeBefore)}，低于底线 ${mb(floor)} —— 命令没有启动。先腾出空间再试。`,
+      )
+    }
+
     // --- 后台：交给作业注册表，立刻返回 ---
     //
     // 刻意**不共用**下面的等待/超时逻辑：后台命令没有退出码可等，把两套语义塞进
@@ -151,6 +226,10 @@ export const runCommandTool: Tool<RunCommandArgs> = {
     let child: ChildProcess | null = null
     let spawnError: unknown = null
     let outcome: Outcome | null = null
+    /** 捕获文件被截过（yes 那种输出炸弹） */
+    let capped = false
+    /** 运行中磁盘跌破底线，命令被我们中止 */
+    let diskLow = false
 
     try {
       try {
@@ -170,7 +249,34 @@ export const runCommandTool: Tool<RunCommandArgs> = {
         // 实测：沙箱下的 EPERM 是同步抛出的，必须在这里接住
         spawnError = err
       }
-      if (child !== null) outcome = await waitFor(child, timeoutMs, ctx.signal)
+      /*
+       * 运行期巡检（250 ms 一次）：
+       *   1. 把捕获文件截到 8 MB —— 否则 `yes` 能在 30 秒里写出 GB 级临时文件
+       *   2. 磁盘余量跌破底线 → 杀树（挡住"命令自己把盘写满"）
+       *
+       * 巡检**不改变**命令的结果语义：它只在越界时动手，并留下一条说明。
+       */
+      const watcher =
+        child === null
+          ? null
+          : setInterval(() => {
+              void (async () => {
+                for (const file of [outPath, errPath]) {
+                  if (await capCaptureFile(file, MAX_CAPTURE_BYTES)) capped = true
+                }
+                const free = await freeBytesOf(cwd)
+                if (free !== null && free < floor && !diskLow) {
+                  diskLow = true
+                  if (child !== null) killTree(child)
+                }
+              })()
+            }, CAPTURE_WATCH_MS)
+
+      try {
+        if (child !== null) outcome = await waitFor(child, timeoutMs, ctx.signal)
+      } finally {
+        if (watcher !== null) clearInterval(watcher)
+      }
     } finally {
       closeSync(outFd)
       closeSync(errFd)
@@ -191,10 +297,32 @@ export const runCommandTool: Tool<RunCommandArgs> = {
         stdout: stdout.text,
         stderr: stderr.text,
         truncated: stdout.truncated || stderr.truncated,
+        /*
+         * 原始字节数要如实给出：`truncated` 只说"被截过"，不说"原来多大"。
+         * 用户看到「输出已截断」时第一个问题就是"有多少我没看到"。
+         */
+        stdoutBytes: stdout.bytes,
+        stderrBytes: stderr.bytes,
+      }
+
+      /*
+       * 磁盘跌破底线被我们中止：这不是命令的错，也不是它的退出码，
+       * 所以要单独回一个 kind，并在文案里说清"是我们停的"。
+       */
+      if (diskLow) {
+        return failResult(
+          'insufficient_disk',
+          `命令运行期间磁盘剩余空间跌破底线（${(floor / 1024 / 1024).toFixed(0)} MB），已中止。`,
+          { content: composeContent(null, 'SIGKILL', stdout.text, stderr.text), data },
+        )
       }
 
       if (outcome?.type === 'timeout') {
-        const note = `命令超过 ${timeoutMs}ms 未结束，已强制终止`
+        const note =
+          `命令超过 ${timeoutMs}ms 未结束，已强制终止` +
+          (outcome.wholeTree
+            ? ''
+            : '（只终止了直接子进程 —— 这个环境不允许杀整棵进程树，它派生的孙进程可能还在运行）')
         return failResult('timeout', note, {
           content: composeContent(null, 'SIGKILL', stdout.text, stderr.text, note),
           data,
@@ -214,7 +342,13 @@ export const runCommandTool: Tool<RunCommandArgs> = {
 
       const code = outcome?.type === 'close' ? outcome.code : null
       const signalName = outcome?.type === 'close' ? outcome.signal : null
-      const content = composeContent(code, signalName, stdout.text, stderr.text)
+      const capNote =
+        stdout.truncated || stderr.truncated
+          ? `输出被截断：stdout 原始 ${stdout.bytes} 字节、stderr 原始 ${stderr.bytes} 字节，只保留了前 ${MAX_CAPTURE_BYTES} 字节。要看细节请用更精确的命令（grep / 重定向到文件后再读）。`
+          : null
+      const content = capNote === null
+        ? composeContent(code, signalName, stdout.text, stderr.text)
+        : composeContent(code, signalName, stdout.text, stderr.text, capNote)
 
       if (code === 0) return okResult(content, data)
       return failResult('failed', `命令退出码 ${code ?? `(被信号 ${signalName} 终止)`}`, {
@@ -232,8 +366,15 @@ export const runCommandTool: Tool<RunCommandArgs> = {
 type Outcome =
   | { type: 'close'; code: number | null; signal: NodeJS.Signals | null }
   | { type: 'error'; err: unknown }
-  | { type: 'timeout' }
-  | { type: 'aborted' }
+  /**
+   * `wholeTree` = 连孙进程一起收掉了吗。
+   *
+   * 实测：`taskkill /T` 在受限环境里会被直接拒绝（返回 1），那时兜底只能收掉
+   * 直接子进程 —— 孙进程可能还在写文件。所以「已强制终止」这句话必须带上
+   * 这个结论，否则就是一句假话。
+   */
+  | { type: 'timeout'; wholeTree: boolean }
+  | { type: 'aborted'; wholeTree: boolean }
 
 /** 强制终止后等它真正退出的宽限期 */
 const REAP_GRACE_MS = 2000
@@ -272,10 +413,17 @@ function waitFor(
       resolve(result)
     }
 
-    const terminate = (result: Outcome): void => {
+    /**
+     * 终止。
+     *
+     * 收下 `killTree` 的结论再写进 `forced`：`taskkill` 被拒时兜底只能收掉
+     * 直接子进程，那时"已强制终止"是半句真话，必须让上层看得见。
+     */
+    const terminate = (intent: { type: 'timeout' | 'aborted' }): void => {
       if (forced !== null) return
+      const outcome = killTree(child)
+      const result: Outcome = { ...intent, wholeTree: outcome.wholeTree }
       forced = result
-      killTree(child)
       // 兜底：极端情况下 close 一直不来，也不能永远挂着
       reapTimer = setTimeout(() => finish(result), REAP_GRACE_MS)
     }
@@ -347,20 +495,46 @@ function composeContent(
   return parts.join('\n')
 }
 
+/**
+ * 读捕获文件，**流式、按字节封顶**。
+ *
+ * 原来是 `readFile` 整个读进来再截断 —— 那等于先把一个 GB 级文件塞进内存。
+ * 现在只读到 `max * 4` 字节（UTF-8 最坏一个字符 4 字节），再按字符截断：
+ * 内存占用有上界，而且和文件实际大小无关（截断过的文件可能是稀疏的）。
+ */
 async function readCapped(
   file: string,
   max: number,
-): Promise<{ text: string; truncated: boolean }> {
-  let text: string
-  try {
-    text = await readFile(file, 'utf8')
-  } catch {
-    return { text: '', truncated: false }
-  }
-  if (text.length <= max) return { text, truncated: false }
+): Promise<{ text: string; truncated: boolean; bytes: number }> {
+  const info = await stat(file).catch(() => null)
+  if (info === null) return { text: '', truncated: false, bytes: 0 }
+
+  const bytes = info.size
+  /* 空文件直接返回 —— 否则下面会算出 end = -1（createReadStream 会抛 RangeError） */
+  if (bytes === 0) return { text: '', truncated: false, bytes: 0 }
+
+  const want = Math.min(bytes, Math.max(1, max * 4))
+  const chunks: Buffer[] = []
+
+  await new Promise<void>((resolve) => {
+    const stream = createReadStream(file, { start: 0, end: want - 1 })
+    stream.on('data', (chunk) => chunks.push(chunk as Buffer))
+    stream.on('error', () => resolve())
+    stream.on('end', () => resolve())
+    stream.on('close', () => resolve())
+  })
+
+  let text = Buffer.concat(chunks).toString('utf8')
+  const droppedChars = text.length > max
+  if (droppedChars) text = text.slice(0, max)
+
+  const truncated = droppedChars || bytes > Buffer.byteLength(text, 'utf8')
+  if (!truncated) return { text, truncated: false, bytes }
+
   return {
-    text: `${text.slice(0, max)}\n…（输出已截断，原始长度 ${text.length} 字符）`,
+    text: `${text}\n…（输出已截断：只保留前 ${Math.min(bytes, MAX_CAPTURE_BYTES)} 字节，原始 ${bytes} 字节）`,
     truncated: true,
+    bytes,
   }
 }
 

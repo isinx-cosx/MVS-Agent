@@ -28,41 +28,64 @@ export interface Killable {
   kill(signal?: NodeJS.Signals | number): boolean
 }
 
-export function killTree(child: Killable): void {
+export interface KillOutcome {
+  /** 至少直接子进程被杀了（整棵树是否干净是另一回事，见 `wholeTree`） */
+  killed: boolean
+  via: 'taskkill' | 'signal' | 'none'
+  /** 用的手段能不能保证连孙进程一起收 */
+  wholeTree: boolean
+}
+
+export function killTree(child: Killable): KillOutcome {
   const pid = child.pid
   if (pid === undefined) {
-    try {
-      child.kill('SIGKILL')
-    } catch {
-      // 已经退出了
-    }
-    return
+    return { killed: signalOnly(child), via: 'signal', wholeTree: false }
   }
 
   if (process.platform === 'win32') {
-    // stdio 必须是 ignore：本环境里 pipe 会**同步抛 EPERM**（见 command-tool 顶部注释），
-    // 而这条路径上再抛一次错毫无意义。用 spawnSync 是因为 taskkill 很快，
-    // 而 kill 路径本来就该是同步收尾的。
-    spawnSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
+    /*
+     * stdio 必须是 ignore：本环境里 pipe 会**同步抛 EPERM**（见 command-tool 顶部注释）。
+     *
+     * ⚠️ `timeout` 不是可选项：实测在受限环境里 `taskkill` 可能直接返回 1
+     * （被沙箱拒绝），也可能挂住。挂住时没有 timeout 就等于把守护进程一起挂死
+     * —— 而这条路径通常正发生在超时/取消的收尾阶段。
+     */
+    const probe = spawnSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
       stdio: 'ignore',
       windowsHide: true,
+      timeout: 5_000,
     })
-    return
+
+    if (probe.status === 0) return { killed: true, via: 'taskkill', wholeTree: true }
+
+    /*
+     * taskkill 失败（被拒绝 / 权限不足 / 进程已经退出）时的兜底：
+     * 直接 `TerminateProcess` 至少能收掉直接子进程。
+     *
+     * 这不是替代品 —— 孙进程会留下。所以 `wholeTree: false` 必须被调用方看见。
+     */
+    return { killed: signalOnly(child), via: 'signal', wholeTree: false }
   }
 
   try {
     process.kill(-pid, 'SIGKILL')
+    return { killed: true, via: 'signal', wholeTree: true }
   } catch {
-    // 组不存在（比如没开成组）就退回到只杀直接子进程
-    try {
-      child.kill('SIGKILL')
-    } catch {
-      // 已经退出了
-    }
+    return { killed: signalOnly(child), via: 'signal', wholeTree: false }
+  }
+}
+
+/** 只杀直接子进程。失败（进程已退出）不算错 */
+function signalOnly(child: Killable): boolean {
+  try {
+    child.kill('SIGKILL')
+    return true
+  } catch {
+    return false
   }
 }
 
 /** 给 `ChildProcess` 用的窄化版本，省得每个调用方都写一遍类型断言 */
-export function killTreeOf(child: ChildProcess): void {
-  killTree(child)
+export function killTreeOf(child: ChildProcess): KillOutcome {
+  return killTree(child)
 }
