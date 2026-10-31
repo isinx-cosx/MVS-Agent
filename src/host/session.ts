@@ -41,6 +41,7 @@ import { collect } from '../model/collect.ts'
 import { computeCost } from '../model/cost.ts'
 import { describeHits, isSensitivePath, scanText } from '../guard/scan.ts'
 import { shouldScanOutput, writtenPaths, type TaintStore } from '../guard/review.ts'
+import { isScriptPath, loopWarningNote } from '../tools/loop-lint.ts'
 import type { Message, ToolCall, Usage } from '../model/types.ts'
 import type { ToolRegistry } from '../tools/registry.ts'
 import type { ToolContext, ToolResult } from '../tools/types.ts'
@@ -72,6 +73,14 @@ import { skillPromptBlock } from '../skills/prompt.ts'
 import { SessionStore } from './persistence.ts'
 
 const DEFAULT_MAX_STEPS = 24
+
+/**
+ * 一轮里最多新建多少个文件。
+ *
+ * 0 字节文件洪水与目录洪水按「写字节」测不到（它们占的是 MFT 与目录项），
+ * 所以这里按**个数**管。2000 是够用且明显异常的阈值：正常一轮改几十个。
+ */
+const MAX_CREATED_PER_TURN = 2_000
 
 /**
  * 执行一次工具调用。
@@ -220,6 +229,8 @@ export class Session {
   #toolCalls: ToolCallRecord[] = []
   #status: SessionStatus = 'idle'
   #turn = 0
+  /** 本轮已新建的文件数（文件数预算用） */
+  #createdThisTurn = 0
   #step = 0
   #interrupted: { callId: string; tool: string; argsJson: string } | null = null
   #pending: PendingApproval | null = null
@@ -1312,6 +1323,22 @@ export class Session {
       }
     }
 
+    /*
+     * 文件数预算：一轮里新建太多文件就停手。
+     *
+     * 按字节测不到 0 字节文件与目录洪水（它们占 MFT），所以必须按个数管。
+     * 判断放在执行前：既不产生垃圾事务，也让模型立刻知道"这条路走不通了"。
+     */
+    const createsFiles = call.name === 'create_file' || call.name === 'write_file'
+    if (createsFiles && this.#createdThisTurn >= MAX_CREATED_PER_TURN) {
+      return await this.#settle(
+        call,
+        false,
+        `这一轮已经新建了 ${this.#createdThisTurn} 个文件，达到上限 ${MAX_CREATED_PER_TURN} —— 先停下来。` +
+          '如果确实需要生成很多文件，请分批、或者用一条构建命令一次生成（run_command）。',
+      )
+    }
+
     const { result, transactionId } = await this.#deps.executor.execute(
       call.name,
       call.argsJson,
@@ -1330,6 +1357,27 @@ export class Session {
     let reviewed = result
     if (result.ok && shouldScanOutput(call.name)) {
       reviewed = await this.#reviewOutput(call.name, result, parsedArgs)
+    }
+
+    /* 计数：这一轮新建了几个文件（文件数预算用） */
+    if (result.ok && (call.name === 'create_file' || call.name === 'write_file')) {
+      this.#createdThisTurn += 1
+    }
+
+    /*
+     * 死循环提示：**只提示，不拦**。
+     *
+     * 只看本次写入的正文（`write_file` / `create_file`）。不去审仓库里的老代码 ——
+     * 那是 linter 的活，而老代码里合法的长循环到处都是（dev server 就长这样）。
+     */
+    if (result.ok && (call.name === 'create_file' || call.name === 'write_file')) {
+      const bag = typeof parsedArgs === 'object' && parsedArgs !== null ? (parsedArgs as Record<string, unknown>) : {}
+      const content = bag['content']
+      const rel = bag['path']
+      if (typeof content === 'string' && typeof rel === 'string' && isScriptPath(rel)) {
+        const note = loopWarningNote(content)
+        if (note !== null) reviewed = { ...reviewed, content: `${reviewed.content}\n\n${note}` }
+      }
     }
 
     const summary = reviewed.ok

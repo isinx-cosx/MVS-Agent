@@ -748,7 +748,13 @@ export class Runtime {
       path: canonical,
       recovery,
       jobs,
-      executor: new RecoveryGuard(this.#registry, recovery),
+      executor: new RecoveryGuard(this.#registry, recovery, {
+        /*
+         * 默认**不自动补回**：构建脚本、测试、格式化都会自己删临时文件，
+         * 自动补会在这些场景上误伤。要更硬的保护就把 MVS_RESTORE_DELETED 打开。
+         */
+        restoreDeletedByCommands: process.env.MVS_RESTORE_DELETED === '1',
+      }),
       skills,
       plugins,
       taint,

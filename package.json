@@ -19,6 +19,7 @@
     "config": "node src/cli/config.ts",
     "skills": "node src/cli/skills.ts",
     "eval": "node src/cli/eval.ts",
+    "maintain": "node src/cli/maintain.ts",
     "plugins": "node src/cli/plugins.ts",
     "serve": "node src/cli/serve.ts",
     "serve:ui": "node src/cli/serve.ts",

@@ -42,6 +42,9 @@ const NO_EFFECT_ERRORS = new Set(['invalid_args', 'unknown_tool'])
  */
 const NARROWED_TOOLS = new Set(['write_file', 'create_file', 'delete_file', 'edit'])
 
+/** 这两个是**结构化**的删除/移动工具：它们的删除是用户点过头的，不该再被审计唠叨 */
+const RENAME_ONLY_TOOLS = new Set(['delete_paths', 'move_path'])
+
 /**
  * 从工具参数里取出可以收窄的路径。
  *
@@ -72,9 +75,21 @@ export class RecoveryGuard {
   #registry: ToolRegistry
   #manager: RecoveryManager
 
-  constructor(registry: ToolRegistry, manager: RecoveryManager) {
+  #restoreDeleted: boolean
+
+  /**
+   * @param options.restoreDeletedByCommands 一条命令删了工作区里的文件时，
+   *   **自动把它们补回来**。默认关：很多正常命令自己会删临时文件，
+   *   默认开会在构建脚本上误伤。打开它的人是把"防手滑"放在"少打扰"前面的。
+   */
+  constructor(
+    registry: ToolRegistry,
+    manager: RecoveryManager,
+    options: { restoreDeletedByCommands?: boolean } = {},
+  ) {
     this.#registry = registry
     this.#manager = manager
+    this.#restoreDeleted = options.restoreDeletedByCommands === true
   }
 
   get manager(): RecoveryManager {
@@ -142,7 +157,43 @@ export class RecoveryGuard {
     }
 
     const transaction = await this.#manager.commit(pending)
-    return transaction === null ? { result } : { result, transactionId: transaction.id }
+    if (transaction === null) return { result }
+
+    /*
+     * 事后审计：**这条命令删了工作区里的文件，而它不是结构化删除工具。**
+     *
+     * 两种处置：
+     *   · 默认：在结果里如实说明，并指出可以用撤销（事务 id 就在结果里）
+     *   · 打开 restoreDeletedByCommands：直接把被删的文件补回来
+     *
+     * 为什么默认不自动补：`npm test`、打包脚本、代码格式化都会自己删临时文件，
+     * 自动补回来会在这些场景上误伤。所以"看到"是默认，"自动修"要显式打开。
+     */
+    if (NARROWED_TOOLS.has(name) === false && RENAME_ONLY_TOOLS.has(name) === false) {
+      const removed = transaction.changes.removed
+      if (removed.length > 0) {
+        const preview = removed.slice(0, 10).join('、')
+        const more = removed.length > 10 ? ` 等 ${removed.length} 个` : ''
+        if (this.#restoreDeleted) {
+          const fixed = await this.#manager.restorePaths(transaction.id, removed)
+          const note =
+            `\n\n〔事后审计〕这条命令删了 ${removed.length} 个文件：${preview}${more}。` +
+            `已自动还原 ${fixed.restored.length} 个` +
+            (fixed.failed.length > 0 ? `，失败 ${fixed.failed.length} 个` : '') +
+            '。要删东西请用 delete_paths（可撤销、有路径围栏）。'
+          return {
+            result: { ...result, content: `${result.content}${note}` },
+            transactionId: transaction.id,
+          }
+        }
+        const note =
+          `\n\n〔事后审计〕这条命令删了 ${removed.length} 个文件：${preview}${more}。` +
+          '如果不是有意的，可以用这次事务的撤销按钮还原（或者把 MVS_RESTORE_DELETED=1 打开让这类删除自动补回）。'
+        return { result: { ...result, content: `${result.content}${note}` }, transactionId: transaction.id }
+      }
+    }
+
+    return { result, transactionId: transaction.id }
   }
 }
 

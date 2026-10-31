@@ -894,6 +894,7 @@ node src/cli/chat.ts --base-url http://127.0.0.1:8787/v1 --model fake "你好"  
 ```bash
 npm test        # 292 个用例（1 个在无法建符号链接的机器上跳过）
 npm run typecheck
+npm run maintain # 日志精简 + 临时目录清理（离线，见 docs/破坏性与资源护栏.md）
 npm run eval    # 行为评估（见 docs/行为评估.md）—— 没有模型时用自检：
                 # npm run eval -- --scripted --scenarios eval/scenarios-scripted
 ```

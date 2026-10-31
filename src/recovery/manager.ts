@@ -15,7 +15,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { diffText, type FileDiff } from './diff.ts'
 import { diffSnapshots, walkTree } from './snapshot.ts'
@@ -291,6 +291,51 @@ export class RecoveryManager {
   // 恢复
   // -------------------------------------------------------------------------
 
+  /**
+   * **只把被删掉的文件复原**（不动改动过的那些）。
+   *
+   * 用途：`run_command` 事后审计 —— 一条命令删了工作区里的文件，而它不是
+   * `delete_paths`，那多半是误伤（`del /s`、脚本里的清理、编码混淆后的删除）。
+   *
+   * 与 `restore(txnId)` 的差别：那个会把整个事务翻回去（含修改），这个只补删除。
+   * 后者更适合"自动兜底"：不该顺手把人家正常的改动也撤了。
+   */
+  async restorePaths(
+    transactionId: string,
+    relPaths: string[],
+  ): Promise<{ restored: string[]; failed: Array<{ path: string; message: string }> }> {
+    const result: { restored: string[]; failed: Array<{ path: string; message: string }> } = {
+      restored: [],
+      failed: [],
+    }
+    const target = (await this.list()).find((txn) => txn.id === transactionId)
+    if (target === undefined) return result
+
+    const before = await this.#store.loadSnapshot(target.before)
+    if (before === null) return result
+
+    for (const rel of relPaths) {
+      const entry = before.entries[rel]
+      if (entry === undefined) continue
+      const bytes = await this.#readBlob(entry.hash)
+      if (bytes === null) {
+        result.failed.push({ path: rel, message: '内容已不在（快照被回收）' })
+        continue
+      }
+      const abs = path.join(this.#root, rel)
+      try {
+        await mkdir(path.dirname(abs), { recursive: true })
+        await writeFile(abs, bytes)
+        result.restored.push(rel)
+      } catch (err) {
+        result.failed.push({
+          path: rel,
+          message: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    return result
+  }
   async restore(
     transactionId: string,
     options: { force?: boolean } = {},
