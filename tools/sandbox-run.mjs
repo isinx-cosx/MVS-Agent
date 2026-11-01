@@ -339,23 +339,16 @@ function run(koffi) {
   const exitCode = [0]
   GetExitCodeProcess(hProcess, exitCode)
 
-  /* 整棵树的写字节 —— 拿不到就不给这个字段（不给 0 假装"没写"） */
+  /* 整棵树的写字节：QueryInformationJobObject 的输出参数同样必须是 Buffer，
+   * 传 JS 对象时 koffi 不回写（和 PROCESS_INFORMATION 是同一个坑）。 */
   let writeBytes
   try {
-    const accounting = {
-      BasicInfo: {
-        TotalUserTime: 0, TotalKernelTime: 0, ThisPeriodTotalUserTime: 0, ThisPeriodTotalKernelTime: 0,
-        TotalPageFaultCount: 0, TotalProcesses: 0, ActiveProcesses: 0, TotalTerminatedProcesses: 0,
-      },
-      IoInfo: {
-        ReadOperationCount: 0, WriteOperationCount: 0, OtherOperationCount: 0,
-        ReadTransferCount: 0, WriteTransferCount: 0, OtherTransferCount: 0,
-      },
-    }
+    const accountingBuf = Buffer.alloc(koffi.sizeof(ACCOUNTING))
     if (
-      QueryInformationJobObject(job, JobObjectBasicAndIoAccountingInformation, accounting, koffi.sizeof(ACCOUNTING), null) !== 0
+      QueryInformationJobObject(job, JobObjectBasicAndIoAccountingInformation, accountingBuf, accountingBuf.length, null) !== 0
     ) {
-      writeBytes = Number(accounting.IoInfo.WriteTransferCount)
+      /* IO_COUNTERS 从偏移 48 开始，WriteTransferCount 是其中第 5 个 int64 */
+      writeBytes = Number(accountingBuf.readBigUInt64LE(48 + 32))
     }
   } catch {
     /* 保留 undefined */
