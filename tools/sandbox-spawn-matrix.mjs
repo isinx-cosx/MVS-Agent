@@ -134,6 +134,13 @@ const CreateFileW = kernel.func(
   'void * __stdcall CreateFileW(str16, uint32, uint32, SECURITY_ATTRIBUTES *, uint32, uint32, void *)',
 )
 const GetLastError = kernel.func('uint32 __stdcall GetLastError()')
+/*
+ * 对照档：`CreateProcessW` 不涉及令牌 —— 用它证明「结构体 + 输出参数」这套写法本身对不对。
+ * 前几轮我把「管道错了」和「降权错了」混在一起试，所以每次失败都不知道是哪一半。
+ */
+const CreateProcessW = kernel.func(
+  'int32 __stdcall CreateProcessW(str16, void *, void *, void *, int32, uint32, void *, str16, STARTUPINFOEXW *, PROCESS_INFORMATION *)',
+)
 const InitializeProcThreadAttributeList = kernel.func(
   'int32 __stdcall InitializeProcThreadAttributeList(void *, uint32, uint32, _Inout_ uintptr *)',
 )
@@ -158,6 +165,10 @@ const OPEN_ALWAYS = 4
 const FILE_ATTRIBUTE_NORMAL = 0x80
 
 const Q = String.fromCharCode(34)
+
+function readPtr(buffer, offset) {
+  return buffer.readBigUInt64LE(offset)
+}
 
 /** 造令牌：none 用当前进程的，restricted-low 走完整五步 */
 function buildToken() {
@@ -191,7 +202,7 @@ function buildToken() {
 }
 
 /** 跑一档：buildStartup 决定用哪种 STARTUPINFO，attachedJob 决定是不是创建时就挂 job */
-function arm(label, { extended, startInJob }) {
+function arm(label, { extended, startInJob, plain }) {
   const dir = mkdtempSync(path.join(tmpdir(), 'mvs-matrix-'))
   const marker = path.join(dir, 'marker.txt')
   const result = { arm: label, token: tokenMode }
@@ -219,8 +230,9 @@ function arm(label, { extended, startInJob }) {
       null,
     )
 
-    const argList = [process.env.ComSpec ?? 'cmd.exe', '/c', `echo MARK > ${Q}${marker}${Q}`]
-    const line = argList.map((item) => Q + item + Q).join(' ')
+    const exe = process.env.ComSpec ?? 'cmd.exe'
+    const inner = 'echo MARK > ' + Q + marker + Q
+    const line = Q + exe + Q + ' /c ' + Q + inner + Q
     const lineBuffer = Buffer.concat([Buffer.from(line, 'utf16le'), Buffer.from([0, 0])])
 
     const baseInfo = {
@@ -286,25 +298,21 @@ function arm(label, { extended, startInJob }) {
       startup.lpAttributeList = attributeBuffer
     }
 
-    const info = { hProcess: null, hThread: null, dwProcessId: 0, dwThreadId: 0 }
-    const created = CreateProcessAsUserW(
-      primaryToken,
-      null,
-      lineBuffer,
-      null,
-      null,
-      1,
-      (extended ? EXTENDED_STARTUPINFO_PRESENT : 0) | CREATE_SUSPENDED,
-      null,
-      dir,
-      startup,
-      info,
-    )
-    if (created === 0) {
-      result.create = `failed(${GetLastError()})`
+    /* Buffer 自己承接输出：JS 对象的回写不可靠（实测 raw=1 但 pid 一直是 0） */
+    const infoBuf = Buffer.alloc(koffi.sizeof(PROCESS_INFORMATION))
+    const flags = (extended ? EXTENDED_STARTUPINFO_PRESENT : 0) | CREATE_SUSPENDED
+    const raw =
+      plain === true
+        ? CreateProcessW(null, lineBuffer, null, null, 1, flags, null, dir, startup, infoBuf)
+        : CreateProcessAsUserW(primaryToken, null, lineBuffer, null, null, 1, flags, null, dir, startup, infoBuf)
+    result.raw = raw
+    result.lastError = GetLastError()
+    if (raw === 0) {
+      result.create = `failed(${result.lastError})`
       return result
     }
     result.create = 'ok'
+    const info = { hProcess: readPtr(infoBuf, 0), hThread: readPtr(infoBuf, 8), dwProcessId: infoBuf.readUInt32LE(16) }
     result.pid = info.dwProcessId
 
     if (!extended && job) {
@@ -342,6 +350,11 @@ function arm(label, { extended, startInJob }) {
 const rows = [
   arm('A: STARTUPINFOW, 事后 Assign', { extended: false, startInJob: true }),
   arm('B: STARTUPINFOEXW + JobList', { extended: true, startInJob: true }),
+  /*
+   * C 档是**对照**：不碰令牌、不碰 job，只验「结构体 + 输出参数」这套写法。
+   * C 档也拿不到 pid，说明问题在 FFI 管道；C 档能拿到 pid，说明管道没问题、问题在 token。
+   */
+  arm('C: CreateProcessW（对照，无令牌）', { extended: false, startInJob: false, plain: true }),
 ]
 
 for (const row of rows) console.log(JSON.stringify(row))
