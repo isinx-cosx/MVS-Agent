@@ -21,6 +21,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { resolveInsideRoot } from './paths.ts'
 import { killTreeOf as killTree } from './kill-tree.ts'
+import { runInSandbox } from './sandbox-exec.ts'
 import {
   DEFAULT_MAX_OUTPUT_CHARS,
   DEFAULT_TIMEOUT_MS,
@@ -164,6 +165,76 @@ export const runCommandTool: Tool<RunCommandArgs> = {
 
     const timeoutMs = args.timeoutMs ?? ctx.timeoutMs ?? DEFAULT_TIMEOUT_MS
     const maxOutput = ctx.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS
+
+    /*
+     * ★ 沙箱分支：`MVS_SANDBOX=low-il` 时命令走 `tools/sandbox-run.mjs`。
+     *
+     * 打开的收益是四道**硬上限**（进程数 / 单进程内存 / 整树内存 / CPU 时间）
+     * 加写字节度量，代价是每条命令多一次 node 启动（实测 ~120 ms）。
+     *
+     * 没打开时完全不改变原有行为 —— 这是刻意的：默认值不能悄悄变。
+     */
+    if (process.env.MVS_SANDBOX === 'low-il') {
+      const sandboxed = await runInSandbox({
+        command: args.command,
+        args: args.args ?? (process.platform === 'win32' ? ['/c', args.command] : ['-c', args.command]),
+        cwd,
+        timeoutMs,
+        ...(process.env.MVS_SANDBOX_MAX_PROCESSES === undefined
+          ? {}
+          : { maxProcesses: Number(process.env.MVS_SANDBOX_MAX_PROCESSES) }),
+        ...(process.env.MVS_SANDBOX_MAX_MEMORY_MB === undefined
+          ? {}
+          : { maxMemoryMb: Number(process.env.MVS_SANDBOX_MAX_MEMORY_MB) }),
+      })
+
+      if (sandboxed.ok !== true) {
+        /*
+         * 沙箱起不来 ≠ 命令失败。这一种必须**报错**而不是"当作命令失败"，
+         * 否则用户会以为是自己的命令有问题，而实际是这台机器用不了沙箱。
+         */
+        if (sandboxed.error !== undefined && sandboxed.exitCode === undefined) {
+          return failResult('failed', `沙箱没能启动：${sandboxed.error}`)
+        }
+        const note = [
+          `命令退出码 ${sandboxed.exitCode ?? '(未知)'}`,
+          sandboxed.timedOut === true ? '（超时，整棵进程树已被终止）' : '',
+          sandboxed.writeBytes === undefined ? '' : `写盘 ${sandboxed.writeBytes} 字节`,
+        ].join(' ')
+        return failResult('failed', note, {
+          content: composeContent(
+            sandboxed.exitCode ?? null,
+            null,
+            sandboxed.stdout ?? '',
+            sandboxed.stderr ?? '',
+            `沙箱：${note}`,
+          ),
+          data: { sandbox: sandboxed, cwd },
+        })
+      }
+
+      const content = composeContent(
+        sandboxed.exitCode ?? null,
+        null,
+        sandboxed.stdout ?? '',
+        sandboxed.stderr ?? '',
+        sandboxed.timedOut === true ? '命令超时，整棵进程树已被终止' : undefined,
+      )
+      /* 非零退出码必须是失败：沙箱自己工作正常，不等于命令成功 */
+      if ((sandboxed.exitCode ?? 0) !== 0) {
+        return failResult('failed', `命令退出码 ${sandboxed.exitCode}`, {
+          content,
+          data: { exitCode: sandboxed.exitCode, writeBytes: sandboxed.writeBytes, cwd, sandbox: 'low-il' },
+        })
+      }
+      return okResult(content, {
+        exitCode: sandboxed.exitCode,
+        timedOut: sandboxed.timedOut ?? false,
+        writeBytes: sandboxed.writeBytes,
+        cwd,
+        sandbox: 'low-il',
+      })
+    }
 
     // --- 确定启动方式 ---
     const direct = args.args !== undefined
