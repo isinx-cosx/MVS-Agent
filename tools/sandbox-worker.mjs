@@ -38,7 +38,7 @@
  *
  * 还剩一个缺口：**stdout/stderr 通过继承句柄没接上**（Linux 那边 libuv 的 fd 就是
  * HANDLE，但这里传过去子进程读到的是空）。当前只能用 `--stdout` 之外的路径确认输出，
- * 或者退回"用 shell 重定向到文件"（`cmd /c "... > out.txt 2> err.txt"`）。
+ * 或者退回"用 shell 重定向到文件"（`cmd /c "... > out.txt 2> err.txt"`）。`n *`n * 换 `CreateFileW` 之后仍然为空：句柄**不是可继承的**（`lpSecurityAttributes` 传了 null）。`n * 下一步要建 `SECURITY_ATTRIBUTES { nLength, lpSecurityDescriptor, bInheritHandle=TRUE }`。
  *
  * ## 没有 koffi 时
  *
@@ -46,7 +46,7 @@
  * **不静默降级**：用户以为在沙箱里跑、实际没有，比明确说"这台机器用不了"更糟。
  */
 
-import { closeSync, openSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 
 const args = process.argv.slice(2)
 const argOf = (name, fallback) => {
@@ -222,6 +222,9 @@ function run(koffi) {
     'bool __stdcall QueryInformationJobObject(void *, int32, void *, uint32, void *)',
   )
   const CloseHandle = kernel.func('bool __stdcall CloseHandle(void *)')
+  const CreateFileW = kernel.func(
+    'void * __stdcall CreateFileW(str16, uint32, uint32, void *, uint32, uint32, void *)',
+  )
 
   const TOKEN_ALL_ACCESS = 0xf01ff
   const WRITE_RESTRICTED = 0x1
@@ -359,8 +362,19 @@ function run(koffi) {
     throw new Error('UpdateProcThreadAttribute(JobList) 失败')
   }
 
-  const stdoutFd = openSync(argOf('--stdout', `${outPath ?? 'sandbox'}.out`), 'w')
-  const stderrFd = openSync(argOf('--stderr', `${outPath ?? 'sandbox'}.err`), 'w')
+  /*
+   * Output handles must be created by CreateFileW: libuv fd is not inheritable,
+   * so the child sees an empty stream (measured).
+   */
+  const GENERIC_WRITE = 0x40000000
+  const FILE_SHARE_ALL = 0x00000007
+  const OPEN_ALWAYS = 4
+  const FILE_ATTRIBUTE_NORMAL = 0x80
+  const stdoutPath = argOf('--stdout', (outPath === null ? 'sandbox' : outPath) + '.out')
+  const stderrPath = argOf('--stderr', (outPath === null ? 'sandbox' : outPath) + '.err')
+  const outHandle = CreateFileW(stdoutPath, GENERIC_WRITE, FILE_SHARE_ALL, null, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, null)
+  const errHandle = CreateFileW(stderrPath, GENERIC_WRITE, FILE_SHARE_ALL, null, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, null)
+  if (!outHandle || !errHandle) throw new Error('CreateFileW failed')
 
   const startupEx = {
     StartupInfo: {
@@ -375,8 +389,8 @@ function run(koffi) {
       cbReserved2: 0,
       lpReserved2: null,
       hStdInput: null,
-      hStdOutput: koffi.as(BigInt(stdoutFd), 'void *'),
-      hStdError: koffi.as(BigInt(stderrFd), 'void *'),
+      hStdOutput: outHandle,
+      hStdError: errHandle,
     },
     lpAttributeList: attributeBuffer,
   }
@@ -396,8 +410,8 @@ function run(koffi) {
     info,
   )
   if (!created) {
-    closeSync(stdoutFd)
-    closeSync(stderrFd)
+    CloseHandle(outHandle)
+    CloseHandle(errHandle)
     throw new Error(`CreateProcessAsUserW 失败（GetLastError=${koffi.errno?.() ?? 0}）`)
   }
   report.steps.spawn = 'ok'
@@ -427,8 +441,8 @@ function run(koffi) {
     /* 拿不到就不给这个数（不要给 0 假装"没写"） */
   }
 
-  closeSync(stdoutFd)
-  closeSync(stderrFd)
+  CloseHandle(outHandle)
+  CloseHandle(errHandle)
   CloseHandle(info.hThread)
   CloseHandle(info.hProcess)
   CloseHandle(job)
