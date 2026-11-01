@@ -21,7 +21,22 @@
  *
  * 结果文件：`{ ok, exitCode, writeBytes, timedOut, error }`
  *
- * ## 已知限制（实测）
+ * ## 已知限制（实测，2026-02 这轮）
+ *
+ * **子进程能创建、但不执行。** 三组对照都得到同一个结果：
+ *
+ *     --token=none            aliveAfter300ms=false, exitCode=0, 命令没有产生任何文件
+ *     --token=restricted-low  aliveAfter300ms=false, exitCode=0, 同上
+ *
+ * 也就是说：**问题不在受限令牌，也不在低完整性** —— 用当前进程自己的令牌也一样不执行。
+ * 已经排除的：命令行（已改成 UTF-16 可写 buffer + 拼参数）、stdout 句柄（命令自己
+ * 重定向也不产生文件）。仍然可疑：`STARTUPINFOEXW` 的属性列表、`CREATE_NO_WINDOW`、
+ * 或者"worker 本身已在受限环境里再套一层 CreateProcessAsUser"。
+ *
+ * 下一步（明确）：把 `STARTUPINFOEXW` 换回普通 `STARTUPINFOW`（不传 job，
+ * 事后再 Assign）跑一次 —— 若那时命令能执行，就把矛头锁在属性列表上。
+ *
+ * ## 更早的已知限制
  *
  * `AssignProcessToJobObject` 在**本进程已经在一个 Job 里**时会失败（`ERROR_ACCESS_DENIED`）：
  * Windows 8+ 支持嵌套 Job，但把子进程塞进新 Job 需要它不是"父 Job 的成员"。
@@ -270,6 +285,9 @@ function run(koffi) {
   if (!DuplicateTokenEx(restricted[0], TOKEN_ALL_ACCESS, null, 2, TOKEN_PRIMARY, primary)) {
     throw new Error('DuplicateTokenEx 失败')
   }
+  const tokenMode = argOf('--token', 'restricted-low')
+  if (tokenMode === 'none') primary[0] = token[0]
+
   report.steps.token = 'ok'
   if (selfCheck) {
     CloseHandle(token[0])
@@ -396,10 +414,17 @@ function run(koffi) {
   }
   const info = { hProcess: null, hThread: null, dwProcessId: 0, dwThreadId: 0 }
 
+  /* command line: mutable UTF-16 buffer, args joined (lpCommandLine must not be null,
+   * otherwise the child starts with no arguments -- measured: cmd exited 0 and did nothing) */
+  const Q = String.fromCharCode(34)
+  const argList = [command, ...commandArgs]
+  const commandLine = argList.map((item) => Q + item + Q).join(' ')
+  const commandLineBuffer = Buffer.concat([Buffer.from(commandLine, 'utf16le'), Buffer.from([0, 0])])
+
   const created = CreateProcessAsUserW(
     primary[0],
-    command,
     null,
+    commandLineBuffer,
     null,
     null,
     true,
@@ -419,6 +444,12 @@ function run(koffi) {
   report.steps.jobAttached = 'ok'
 
   ResumeThread(info.hThread)
+
+  /* 300ms 后还活着吗 —— 用来区分"从未运行"与"跑了又退" */
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300)
+  const stillAlive = WaitForSingleObject(info.hProcess, 0) === 0x102
+  report.steps.aliveAfter300ms = String(stillAlive)
+
   ResumeThread(info.hThread)
 
   /* ④ 等结束（墙钟上限 = CPU 上限 × 2 + 30 秒，够宽但不无限） */
