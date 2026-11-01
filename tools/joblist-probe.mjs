@@ -42,10 +42,10 @@ if (koffi === null) {
 try {
   const kernel = koffi.load('kernel32.dll')
   const InitializeProcThreadAttributeList = kernel.func(
-    'bool __stdcall InitializeProcThreadAttributeList(void *pAttrList, uint32 dwAttributeCount, uint32 dwFlags, _Out_ uintptr *lpSize)',
+    'int32 __stdcall InitializeProcThreadAttributeList(void *pAttrList, uint32 dwAttributeCount, uint32 dwFlags, _Inout_ uintptr *lpSize)',
   )
   const UpdateProcThreadAttribute = kernel.func(
-    'bool __stdcall UpdateProcThreadAttribute(void *pAttrList, uint32 dwFlags, uintptr Attribute, void *lpValue, uintptr cbSize, void *lpPreviousValue, void *lpReturnSize)',
+    'int32 __stdcall UpdateProcThreadAttribute(void *pAttrList, uint32 dwFlags, uintptr Attribute, void *lpValue, uintptr cbSize, void *lpPreviousValue, void *lpReturnSize)',
   )
   const DeleteProcThreadAttributeList = kernel.func('void __stdcall DeleteProcThreadAttributeList(void *pAttrList)')
   const CreateJobObjectW = kernel.func('void * __stdcall CreateJobObjectW(void *lpJobAttributes, str16 lpName)')
@@ -61,9 +61,9 @@ try {
   if (sizeOut[0] <= 0) throw new Error('第一次调用没拿到大小')
 
   /* ② 第二次：真建。缓冲区比 size 大一点，避免 koffi 的边界计算差一格 */
-  const buffer = Buffer.alloc(sizeOut[0] + 64)
-  const size2 = [sizeOut[0] + 64]
-  if (!InitializeProcThreadAttributeList(buffer, 1, 0, size2)) {
+  const buffer = Buffer.alloc(sizeOut[0])
+  const size2 = [sizeOut[0]]
+  if (InitializeProcThreadAttributeList(buffer, 1, 0, size2) === 0) {
     throw new Error(`第二次调用失败（errno=${koffi.errno?.() ?? 'unknown'}）`)
   }
   report.steps.init = 'ok'
@@ -85,7 +85,7 @@ try {
     null,
     null,
   )
-  report.steps.update = updated ? 'ok' : `failed(errno=${koffi.errno?.() ?? 'unknown'})`
+  report.steps.update = updated !== 0 ? 'ok' : `failed(errno=${koffi.errno?.() ?? 'unknown'})`
 
   DeleteProcThreadAttributeList(buffer)
   report.steps.delete = 'ok'

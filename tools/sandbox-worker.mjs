@@ -33,7 +33,12 @@
  *   · `CreateProcessAsUser` **已可用**（实测能起进程）
  *   · Job 上限**已能配置**，但**挂不上去** —— 因此四个上限目前不生效
  *
- * 在接上之前，这个 worker 不能用来做"资源上限"，只能用来验证令牌那条路。
+ * **已接上**（`ProcThreadAttributeJobList`）：实测
+ * `{"ok":true,"steps":{"token":"ok","job":"ok","spawn":"ok","jobAttached":"ok"},"exitCode":0}`。
+ *
+ * 还剩一个缺口：**stdout/stderr 通过继承句柄没接上**（Linux 那边 libuv 的 fd 就是
+ * HANDLE，但这里传过去子进程读到的是空）。当前只能用 `--stdout` 之外的路径确认输出，
+ * 或者退回"用 shell 重定向到文件"（`cmd /c "... > out.txt 2> err.txt"`）。
  *
  * ## 没有 koffi 时
  *
@@ -133,6 +138,10 @@ function run(koffi) {
     hStdOutput: 'void *',
     hStdError: 'void *',
   })
+  const STARTUPINFOEXW = koffi.struct('STARTUPINFOEXW', {
+    StartupInfo: STARTUPINFOW,
+    lpAttributeList: 'void *',
+  })
   const PROCESS_INFORMATION = koffi.struct('PROCESS_INFORMATION', {
     hProcess: 'void *',
     hThread: 'void *',
@@ -189,8 +198,15 @@ function run(koffi) {
     'bool __stdcall SetTokenInformation(void *, int32, TOKEN_MANDATORY_LABEL *, uint32)',
   )
   const ConvertStringSidToSidW = advapi.func('bool __stdcall ConvertStringSidToSidW(str16, _Out_ void **)')
+  const InitializeProcThreadAttributeList = kernel.func(
+    'int32 __stdcall InitializeProcThreadAttributeList(void *pAttrList, uint32 dwAttributeCount, uint32 dwFlags, _Inout_ uintptr *lpSize)',
+  )
+  const UpdateProcThreadAttribute = kernel.func(
+    'int32 __stdcall UpdateProcThreadAttribute(void *pAttrList, uint32 dwFlags, uintptr Attribute, void *lpValue, uintptr cbSize, void *lpPreviousValue, void *lpReturnSize)',
+  )
+  const DeleteProcThreadAttributeList = kernel.func('void __stdcall DeleteProcThreadAttributeList(void *pAttrList)')
   const CreateProcessAsUserW = advapi.func(
-    'bool __stdcall CreateProcessAsUserW(void *, str16, void *, void *, void *, bool, uint32, void *, str16, STARTUPINFOW *, PROCESS_INFORMATION *)',
+    'bool __stdcall CreateProcessAsUserW(void *, str16, void *, void *, void *, bool, uint32, void *, str16, STARTUPINFOEXW *, PROCESS_INFORMATION *)',
   )
   const GetCurrentProcess = kernel.func('void * __stdcall GetCurrentProcess()')
   const CreateJobObjectW = kernel.func('void * __stdcall CreateJobObjectW(void *, str16)')
@@ -216,6 +232,8 @@ function run(koffi) {
 
   const CREATE_SUSPENDED = 0x00000004
   const CREATE_NO_WINDOW = 0x08000000
+  const EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+  const PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000d
   const STARTF_USESTDHANDLES = 0x00000100
   const INFINITE = 0xffffffff
   const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
@@ -305,24 +323,62 @@ function run(koffi) {
   report.steps.job = 'ok'
 
   /* ③ 起进程（挂起 → 挂 job → 恢复） */
+  /*
+   * ★ 让进程**一出生就在 job 里**（ProcThreadAttributeJobList）。
+   *
+   * 本进程自己已在一个 Job 里，先 Create 再 Assign 会被拒绝（ERROR_ACCESS_DENIED）；
+   * 把 job 句柄作为创建属性交过去，就不存在"不属于任何 job"的瞬间。
+   *
+   * koffi 细节（探针验过，见 tools/joblist-probe.mjs）：
+   *   · BOOL 用 int32，不要用 bool（4 字节 vs 1 字节）
+   *   · 第一次调用传 null 只拿大小；第二次 lpSize 必须等于缓冲区大小
+   *   · UpdateProcThreadAttribute 的 lpValue 是**指向句柄的指针**
+   */
+  const sizeOut = [0]
+  InitializeProcThreadAttributeList(null, 1, 0, sizeOut)
+  const attributeBuffer = Buffer.alloc(sizeOut[0])
+  const attributeSize = [sizeOut[0]]
+  if (InitializeProcThreadAttributeList(attributeBuffer, 1, 0, attributeSize) === 0) {
+    throw new Error('InitializeProcThreadAttributeList 失败')
+  }
+  const handleBuffer = Buffer.alloc(koffi.sizeof('void *'))
+  const jobAddress = koffi.address(job)
+  if (koffi.sizeof('void *') === 8) handleBuffer.writeBigUInt64LE(BigInt(jobAddress))
+  else handleBuffer.writeUInt32LE(Number(jobAddress))
+  if (
+    UpdateProcThreadAttribute(
+      attributeBuffer,
+      0,
+      BigInt(PROC_THREAD_ATTRIBUTE_JOB_LIST),
+      handleBuffer,
+      BigInt(koffi.sizeof('void *')),
+      null,
+      null,
+    ) === 0
+  ) {
+    throw new Error('UpdateProcThreadAttribute(JobList) 失败')
+  }
+
   const stdoutFd = openSync(argOf('--stdout', `${outPath ?? 'sandbox'}.out`), 'w')
   const stderrFd = openSync(argOf('--stderr', `${outPath ?? 'sandbox'}.err`), 'w')
 
-  const startup = {
-    cb: koffi.sizeof(STARTUPINFOW),
-    lpReserved: null,
-    lpDesktop: null,
-    lpTitle: null,
-    dwX: 0, dwY: 0, dwXSize: 0, dwYSize: 0, dwXCountChars: 0, dwYCountChars: 0,
-    dwFillAttribute: 0,
-    dwFlags: STARTF_USESTDHANDLES,
-    wShowWindow: 0,
-    cbReserved2: 0,
-    lpReserved2: null,
-    /* libuv 的 fd 在 Windows 上就是 HANDLE */
-    hStdInput: null,
-    hStdOutput: koffi.as(BigInt(stdoutFd), 'void *'),
-    hStdError: koffi.as(BigInt(stderrFd), 'void *'),
+  const startupEx = {
+    StartupInfo: {
+      cb: koffi.sizeof(STARTUPINFOEXW),
+      lpReserved: null,
+      lpDesktop: null,
+      lpTitle: null,
+      dwX: 0, dwY: 0, dwXSize: 0, dwYSize: 0, dwXCountChars: 0, dwYCountChars: 0,
+      dwFillAttribute: 0,
+      dwFlags: STARTF_USESTDHANDLES,
+      wShowWindow: 0,
+      cbReserved2: 0,
+      lpReserved2: null,
+      hStdInput: null,
+      hStdOutput: koffi.as(BigInt(stdoutFd), 'void *'),
+      hStdError: koffi.as(BigInt(stderrFd), 'void *'),
+    },
+    lpAttributeList: attributeBuffer,
   }
   const info = { hProcess: null, hThread: null, dwProcessId: 0, dwThreadId: 0 }
 
@@ -333,21 +389,22 @@ function run(koffi) {
     null,
     null,
     true,
-    CREATE_SUSPENDED | CREATE_NO_WINDOW,
+    EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW,
     null,
     argOf('--cwd', null),
-    startup,
+    startupEx,
     info,
   )
   if (!created) {
-    const code = koffi.errno?.() ?? 0
     closeSync(stdoutFd)
     closeSync(stderrFd)
-    throw new Error(`CreateProcessAsUserW 失败（GetLastError=${code}）`)
+    throw new Error(`CreateProcessAsUserW 失败（GetLastError=${koffi.errno?.() ?? 0}）`)
   }
   report.steps.spawn = 'ok'
+  DeleteProcThreadAttributeList(attributeBuffer)
+  report.steps.jobAttached = 'ok'
 
-  if (!AssignProcessToJobObject(job, info.hProcess)) throw new Error('AssignProcessToJobObject 失败')
+  ResumeThread(info.hThread)
   ResumeThread(info.hThread)
 
   /* ④ 等结束（墙钟上限 = CPU 上限 × 2 + 30 秒，够宽但不无限） */
