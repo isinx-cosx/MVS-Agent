@@ -173,8 +173,11 @@ export const runCommandTool: Tool<RunCommandArgs> = {
      * 加写字节度量，代价是每条命令多一次 node 启动（实测 ~120 ms）。
      *
      * 没打开时完全不改变原有行为 —— 这是刻意的：默认值不能悄悄变。
+     *
+     * ★ 后台作业**不走**沙箱：作业要活过这条命令，而 worker 的生命周期是这一条命令；
+     * 把作业塞进 job 会随 worker 退出被 KILL_ON_JOB_CLOSE 一起收掉。
      */
-    if (process.env.MVS_SANDBOX === 'low-il') {
+    if (process.env.MVS_SANDBOX === 'low-il' && args.background !== true) {
       const sandboxed = await runInSandbox({
         command: args.command,
         args: args.args ?? (process.platform === 'win32' ? ['/c', args.command] : ['-c', args.command]),
