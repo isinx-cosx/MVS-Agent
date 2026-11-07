@@ -273,6 +273,34 @@ export const DEFAULT_DENY_RULES: PolicyRule[] = [
   { pattern: 'run_command:powershell -enc', decision: 'deny', note: '命令被 base64 混淆，人无法评估' },
   { pattern: 'run_command:powershell -EncodedCommand', decision: 'deny', note: '命令被 base64 混淆，人无法评估' },
   { pattern: 'run_command:frombase64string', decision: 'deny', note: '命令被 base64 混淆，人无法评估' },
+  /*
+   * ★ 读文件一律走 `read_file` / `grep`，shell 里的读命令**全部拒绝**。
+   *
+   * 理由不是"shell 读不干净"，而是**读的地方没有审核**：`type .env` 的输出
+   * 直接进上下文，而我们的 read_file 会先过一遍闸门（打码 / 整份扣留 / taint）。
+   * 两条路都能读，等于审核可以绕过 —— 那不如不做。
+   *
+   * 拒绝文案必须教路，否则模型会换写法（`Get-Content` 换成 `[IO.File]::ReadAllText`）。
+   */
+  { pattern: 'run_command:type ', decision: 'deny', note: '读文件请用 read_file（有私密内容审核）' },
+  { pattern: 'run_command:cat ', decision: 'deny', note: '读文件请用 read_file（有私密内容审核）' },
+  { pattern: 'run_command:more ', decision: 'deny', note: '读文件请用 read_file' },
+  { pattern: 'run_command:less ', decision: 'deny', note: '读文件请用 read_file' },
+  { pattern: 'run_command:head ', decision: 'deny', note: '读文件请用 read_file（可给 offset / limit）' },
+  { pattern: 'run_command:tail ', decision: 'deny', note: '读文件请用 read_file（可给 offset / limit）' },
+  { pattern: 'run_command:Get-Content', decision: 'deny', note: '读文件请用 read_file' },
+  { pattern: 'run_command:gc ', decision: 'deny', note: '读文件请用 read_file' },
+  { pattern: 'run_command:Select-String', decision: 'deny', note: '搜内容请用 grep（有私密内容审核）' },
+  { pattern: 'run_command:findstr', decision: 'deny', note: '搜内容请用 grep' },
+  { pattern: 'run_command:strings ', decision: 'deny', note: '读文件请用 read_file' },
+  { pattern: 'run_command:od ', decision: 'deny', note: '读文件请用 read_file' },
+  { pattern: 'run_command:xxd ', decision: 'deny', note: '读文件请用 read_file' },
+  { pattern: 'run_command:base64 ', decision: 'deny', note: '编码后再读会绕过审核，请直接用 read_file' },
+  { pattern: 'run_command:certutil -encode', decision: 'deny', note: '编码后再读会绕过审核，请直接用 read_file' },
+  { pattern: 'run_command:copy ', decision: 'deny', note: '复制文件会把内容搬到未审核的路径；请用 read_file + write_file' },
+  { pattern: 'run_command:xcopy ', decision: 'deny', note: '复制文件会绕过审核；请用 read_file + write_file' },
+  { pattern: 'run_command:[IO.File]::ReadAll', decision: 'deny', note: '读文件请用 read_file' },
+  { pattern: 'run_command:Get-ChildItem -Recurse', decision: 'deny', note: '列目录请用 glob' },
 ]
 
 /**

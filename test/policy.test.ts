@@ -258,7 +258,7 @@ test('熔断器：delete_file 删关键路径同样命中', () => {
 // ---------------------------------------------------------------------------
 
 test('危险替换：$()、反引号、${}、进程替换都会剥夺 allow', () => {
-  const cases = ['echo $(whoami)', 'echo `whoami`', 'echo ${HOME}', 'cat <(ls)']
+  const cases = ['echo $(whoami)', 'echo `whoami`', 'echo ${HOME}', 'echo <(ls)']
   for (const cmd of cases) {
     const verdict = judge('full-access', command(cmd))
     assert.equal(verdict.reason, 'dangerous-substitution', `${cmd} 应命中替换守卫`)

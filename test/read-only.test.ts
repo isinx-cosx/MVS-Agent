@@ -53,10 +53,6 @@ test('只读命令必须被放行 —— 否则这个功能等于没做', () => 
     'ls -la',
     'dir',
     'pwd',
-    'cat a.txt',
-    'type a.txt',
-    'head -n 20 a.txt',
-    'tail -n 20 a.txt',
     'wc -l a.txt',
     'grep -n foo a.txt',
     'rg TODO',
@@ -248,3 +244,4 @@ test('只读判定要给出能显示给用户的理由', () => {
   assert.match(why('npm publish'), /不在只读白名单/)
   assert.match(why('npx create-x'), /不在只读程序表/)
 })
+

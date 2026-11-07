@@ -47,6 +47,13 @@ interface Entry {
   requireOptionsOnly?: readonly string[]
 }
 
+/*
+ * ⚠️ 这里**故意没有** `cat` / `type` / `head` / `tail`。
+ *
+ * 它们确实是只读的，但「读文件内容」这件事必须走 `read_file`：那条路会过输出审核
+ * （密钥打码、私密内容打码、敏感路径整份扣留）。如果 shell 也能读，审核就可以绕过 ——
+ * 那等于没做。所以这四个从白名单里去掉，交给 deny 规则去拒绝并教路。
+ */
 const PROGRAMS: Record<string, Entry> = {
   git: {
     subcommands: [
@@ -78,10 +85,6 @@ const PROGRAMS: Record<string, Entry> = {
   ls: {},
   dir: {},
   pwd: {},
-  cat: {},
-  type: {},
-  head: {},
-  tail: {},
   wc: {},
   grep: {},
   rg: {},

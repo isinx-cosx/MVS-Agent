@@ -203,3 +203,117 @@ export function describeHits(hits: SecretHit[]): string {
   for (const hit of hits) counts.set(hit.category, (counts.get(hit.category) ?? 0) + 1)
   return [...counts.entries()].map(([category, count]) => `${category} × ${count}`).join('、')
 }
+
+/* ── 私密内容（PII）──────────────────────────────────────────────────── */
+
+/**
+ * 私密内容与密钥是**两类**东西，不能合并成一张表。
+ *
+ * 密钥是"一旦泄露立刻要轮换"的凭据；私密内容是"关于某个人的信息"——
+ * 手机号、身份证、银行卡、邮箱。它们的处置也不同：密钥整段扣掉，
+ * 私密内容**打码保留形状**（人看得出"这里有个手机号"，但看不到号码）。
+ *
+ * ⚠️ 这一层是**启发式**，不是分类器：
+ *   · 手机号只认中国大陆 1[3-9] 开头 11 位
+ *   · 身份证只认 18 位（含 X）
+ *   · 银行卡只认 16-19 位纯数字且通过 Luhn 校验（否则和订单号没法区分）
+ *   · 邮箱认最常见的形态
+ * 漏报是常见的（比如空格分隔的手机号）；误报会训练用户闭眼放行 ——
+ * 所以宁可用"Luhn 校验"这种硬条件，也不要把 16 位数字一律当卡号。
+ */
+export type PiiCategory = 'phone' | 'id-card' | 'bank-card' | 'email'
+
+export interface PiiHit {
+  line: number
+  category: PiiCategory
+  preview: string
+}
+
+const PHONE = /(?<!\d)1[3-9]\d{9}(?!\d)/g
+const ID_CARD = /(?<![0-9Xx])\d{17}[\dXx](?![0-9Xx])/g
+const BANK_CARD = /(?<!\d)\d{16,19}(?!\d)/g
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g
+
+/** Luhn 校验：银行卡号过不了它，就只是"一串 18 位数字"（订单号、流水号） */
+function luhnOk(digits: string): boolean {
+  let sum = 0
+  let double = false
+  for (let index = digits.length - 1; index >= 0; index -= 1) {
+    let value = digits.charCodeAt(index) - 48
+    if (double) {
+      value *= 2
+      if (value > 9) value -= 9
+    }
+    sum += value
+    double = !double
+  }
+  return sum % 10 === 0
+}
+
+function maskKeepShape(value: string, keepHead: number, keepTail: number): string {
+  if (value.length <= keepHead + keepTail) return '〔已打码〕'
+  return `${value.slice(0, keepHead)}${'*'.repeat(value.length - keepHead - keepTail)}${value.slice(-keepTail)}`
+}
+
+/**
+ * 扫一段文本里的私密内容，**打码但保留形状**。
+ *
+ * 保留形状是有用的：`138****5678` 让人一眼认出"这是手机号，我需要它"，
+ * 而 `〔已扣留〕` 会让人以为是密钥、直接跳过。
+ */
+export function redactPii(text: string): { text: string; hits: PiiHit[] } {
+  if (text === '') return { text, hits: [] }
+  const lines = text.split('\n')
+  const hits: PiiHit[] = []
+
+  for (let index = 0; index < lines.length; index += 1) {
+    let line = lines[index]!
+    if (line.trim() === '') continue
+
+    /* 银行卡先于手机号：18 位数字里可能包含 11 位片段，别被手机号规则先切走 */
+    line = line.replace(BANK_CARD, (match) => {
+      if (!luhnOk(match)) return match
+      hits.push({ line: index + 1, category: 'bank-card', preview: maskKeepShape(match, 4, 4) })
+      return maskKeepShape(match, 4, 4)
+    })
+    line = line.replace(ID_CARD, (match) => {
+      /* 身份证不要求校验位（那是另一套算法），但要求不是银行卡（已处理过） */
+      hits.push({ line: index + 1, category: 'id-card', preview: maskKeepShape(match, 3, 2) })
+      return maskKeepShape(match, 3, 2)
+    })
+    line = line.replace(PHONE, (match) => {
+      hits.push({ line: index + 1, category: 'phone', preview: maskKeepShape(match, 3, 4) })
+      return maskKeepShape(match, 3, 4)
+    })
+    line = line.replace(EMAIL, (match) => {
+      const at = match.indexOf('@')
+      const local = match.slice(0, at)
+      const masked = `${local.slice(0, Math.min(2, local.length))}***${match.slice(at)}`
+      hits.push({ line: index + 1, category: 'email', preview: masked })
+      return masked
+    })
+
+    lines[index] = line
+  }
+
+  return { text: lines.join('\n'), hits }
+}
+
+/** 给说明文字用：`phone × 2、email × 1` */
+export function describePii(hits: PiiHit[]): string {
+  if (hits.length === 0) return ''
+  const counts = new Map<PiiCategory, number>()
+  for (const hit of hits) counts.set(hit.category, (counts.get(hit.category) ?? 0) + 1)
+  return [...counts.entries()].map(([category, count]) => `${category} × ${count}`).join('、')
+}
+
+/**
+ * 这一行是不是"**从敏感文件里读出来的**"。
+ *
+ * `grep` 的输出每行带路径，而路径本身就是分类依据 —— 内容可以编码、可以分段，
+ * 但路径绕不过去。所以 grep 输出先按这一条筛，再走内容扫描。
+ */
+export function looksLikeSensitivePathLine(line: string): boolean {
+  const first = line.trim().split(String.fromCharCode(58))[0] ?? ''
+  return first !== '' && isSensitivePath(first)
+}

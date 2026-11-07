@@ -39,7 +39,7 @@ import {
 } from '../context/types.ts'
 import { collect } from '../model/collect.ts'
 import { computeCost } from '../model/cost.ts'
-import { describeHits, isSensitivePath, scanText } from '../guard/scan.ts'
+import { describeHits, describePii, isSensitivePath, looksLikeSensitivePathLine, redactPii, scanText } from '../guard/scan.ts'
 import { shouldScanOutput, writtenPaths, type TaintStore } from '../guard/review.ts'
 import { isScriptPath, loopWarningNote } from '../tools/loop-lint.ts'
 import type { Message, ToolCall, Usage } from '../model/types.ts'
@@ -1416,12 +1416,32 @@ export class Session {
     const wholeFile =
       tool === 'read_file' && relPath !== undefined ? isSensitivePath(relPath) : false
 
-    const scanned = scanText(result.content, {
+    /*
+     * grep 的输出按**路径**筛：从 `.env` / 私钥里 grep 出来的行整行扣留。
+     *
+     * 内容可以编码、可以分段绕过，但输出里那行路径绕不过去 ——
+     * 所以路径分级在 grep 这一层比内容匹配更可靠。
+     */
+    let content = result.content
+    if (tool === 'grep') {
+      content = content
+        .split('\n')
+        .map((line) => (looksLikeSensitivePathLine(line) ? '〔这一行来自敏感路径，已整行扣留〕' : line))
+        .join('\n')
+    }
+
+    const scanned = scanText(content, {
       ...(wholeFile ? { wholeFile: true } : {}),
       ...(relPath === undefined ? {} : { pathHint: relPath }),
     })
 
-    if (scanned.hits.length === 0) return result
+    /* 私密内容（手机号 / 身份证 / 银行卡 / 邮箱）：打码保留形状，和密钥分开处置 */
+    const pii = redactPii(scanned.text)
+
+    if (scanned.hits.length === 0 && pii.hits.length === 0) {
+      /* grep 的路径扣留可能一条内容规则都没命中 —— 那种情况也要把扣留后的正文交出去 */
+      return content === result.content ? result : { ...result, content }
+    }
 
     /*
      * 记 taint：模型看到的是打码版（或整份被扣），**不是原文**。
@@ -1431,13 +1451,16 @@ export class Session {
       await this.#deps.taint.add(relPath, scanned.hits[0]!.category, '读取时命中敏感内容')
     }
 
+    const parts: string[] = []
+    if (scanned.hits.length > 0) parts.push(`密钥类 ${describeHits(scanned.hits)}`)
+    if (pii.hits.length > 0) parts.push(`私密内容 ${describePii(pii.hits)}`)
     const note =
-      `〔输出审核：${describeHits(scanned.hits)} 已打码〕` +
+      `〔输出审核：${parts.join('；')} 已打码〕` +
       (relPath === undefined ? '' : `（来源：${relPath}，该路径已记入 taint，改动会被拒绝）`)
 
     return {
       ...result,
-      content: `${note}\n\n${scanned.text}`,
+      content: `${note}\n\n${pii.text}`,
       data: {
         ...(typeof result.data === 'object' && result.data !== null ? result.data : {}),
         redacted: scanned.hits.length,
