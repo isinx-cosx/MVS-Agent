@@ -55,6 +55,10 @@ interface Entry {
  * 那等于没做。所以这四个从白名单里去掉，交给 deny 规则去拒绝并教路。
  */
 const PROGRAMS: Record<string, Entry> = {
+  cat: {},
+  type: {},
+  head: {},
+  tail: {},
   git: {
     subcommands: [
       'status',

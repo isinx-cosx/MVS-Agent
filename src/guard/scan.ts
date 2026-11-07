@@ -317,3 +317,83 @@ export function looksLikeSensitivePathLine(line: string): boolean {
   const first = line.trim().split(String.fromCharCode(58))[0] ?? ''
   return first !== '' && isSensitivePath(first)
 }
+
+/* ── 编码绕过：把 blob 解开再扫一次 ───────────────────────────────────── */
+
+/**
+ * 内容审核真正的敌人不是"换个命令读"，而是**编码**。
+ *
+ * `cat .env` 和 `node -e "…"` 读出来的东西，只要最终作为文本进上下文，
+ * 闸门就能审；但 `base64 key.bin` 拿出来的是 base64，正则认不出里面是什么。
+ *
+ * 所以这里做一件事：把看起来像 base64 / 十六进制的长 blob **解开再扫一遍**。
+ * 有上限（每个 blob 最多解 64 KB，一次最多 8 个），因为这是防"顺手绕过"，
+ * 不是防"故意做一个 1 GB 的编码炸弹"—— 那种靠 rlimit 与输出上限。
+ *
+ * ⚠️ 它当然可以再被套一层（base64 套 base64、按字符拆到多行）。这里只做一层，
+ * 因为**再深的编码会让输出变得人也不可读**，那种输出本身就是一个信号。
+ */
+const BASE64_BLOB = /[A-Za-z0-9+/]{40,}={0,2}/g
+const HEX_BLOB = /\b[0-9a-fA-F]{64,}\b/g
+const MAX_BLOB_BYTES = 64 * 1024
+const MAX_BLOBS = 8
+
+function tryDecodeBase64(blob: string): string | undefined {
+  try {
+    const buffer = Buffer.from(blob, 'base64')
+    if (buffer.length < 16 || buffer.length > MAX_BLOB_BYTES) return undefined
+    const text = buffer.toString('utf8')
+    /* 解出来基本是乱码就不是文本（二进制 blob 不在这里处理） */
+    const printable = [...text].filter((ch) => ch === '\n' || ch === '\r' || ch === '\t' || ch >= ' ').length
+    if (printable / text.length < 0.85) return undefined
+    return text
+  } catch {
+    return undefined
+  }
+}
+
+function tryDecodeHex(blob: string): string | undefined {
+  if (blob.length % 2 !== 0) return undefined
+  const bytes = Buffer.from(blob, 'hex')
+  if (bytes.length < 16 || bytes.length > MAX_BLOB_BYTES) return undefined
+  const text = bytes.toString('utf8')
+  const printable = [...text].filter((ch) => ch === '\n' || ch === '\r' || ch === '\t' || ch >= ' ').length
+  if (printable / text.length < 0.85) return undefined
+  return text
+}
+
+export interface EncodedScan {
+  text: string
+  /** 解开后命中的密钥/私密内容条数 */
+  hits: number
+  /** 被替换掉的 blob 个数 */
+  blobs: number
+}
+
+/**
+ * 解一层编码再扫。命中就把整个 blob 换成占位符（原文不留）。
+ */
+export function redactEncoded(text: string): EncodedScan {
+  let hits = 0
+  let blobs = 0
+  let budget = MAX_BLOBS
+
+  const replaceBlob = (pattern: RegExp, decode: (blob: string) => string | undefined): void => {
+    text = text.replace(pattern, (match) => {
+      if (budget <= 0) return match
+      budget -= 1
+      const decoded = decode(match)
+      if (decoded === undefined) return match
+      const scanned = scanText(decoded)
+      const pii = redactPii(decoded)
+      if (scanned.hits.length === 0 && pii.hits.length === 0) return match
+      hits += scanned.hits.length + pii.hits.length
+      blobs += 1
+      return `〔已扣留：base64/hex 里解出的敏感内容（${scanned.hits.length + pii.hits.length} 处）〕`
+    })
+  }
+
+  replaceBlob(BASE64_BLOB, tryDecodeBase64)
+  replaceBlob(HEX_BLOB, tryDecodeHex)
+  return { text, hits, blobs }
+}

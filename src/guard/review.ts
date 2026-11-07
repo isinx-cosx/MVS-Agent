@@ -150,15 +150,36 @@ export function writtenPaths(tool: string, args: unknown): string[] {
 }
 
 /** 这个工具的输出要不要扫。读类、命令、网络、作业输出都要；写类不必（内容由我们自己写） */
+
+/**
+ * 这一条结果要不要审。
+ *
+ * **默认是"要"。** 第一版是白名单（列了 read_file / grep / run_command…），
+ * 那等于每加一个能带内容的工具就多一个缺口 —— 收口在咽喉上，不是列举命令。
+ *
+ * 只有"内容是我们自己写的"那几个工具不需要审：它们的正文来自模型，
+ * 而模型的输入本来就已经过了这一道。
+ */
+const SELF_AUTHORED = new Set([
+  'write_file',
+  'create_file',
+  'edit',
+  'delete_paths',
+  'move_path',
+  'delete_file',
+])
+
 export function shouldScanOutput(tool: string): boolean {
-  return (
-    tool === 'read_file' ||
-    tool === 'grep' ||
-    tool === 'glob' ||
-    tool === 'run_command' ||
-    tool === 'job_output' ||
-    tool === 'web_fetch' ||
-    tool === 'web_search' ||
-    tool === 'use_skill'
-  )
+  return !SELF_AUTHORED.has(tool)
+}
+
+/**
+ * 人要不要"原样看一次"。
+ *
+ * 打码是默认，但**每个阻塞态都要有出口**：模型看不全的时候，人可以要求原样显示，
+ * 代价是那一段进日志 —— 这一点必须在事件里留痕（调用方负责发事件）。
+ */
+export function wantsPlainOutput(args: unknown): boolean {
+  if (typeof args !== 'object' || args === null) return false
+  return (args as Record<string, unknown>)['revealSensitive'] === true
 }

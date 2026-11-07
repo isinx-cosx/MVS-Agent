@@ -162,11 +162,11 @@ test('闸门：写类工具才需要取路径，其它工具返回空', () => {
   assert.deepEqual(writtenPaths('delete_paths', { paths: [1, 2] }), [])
 })
 
-test('闸门：读、命令、网络、作业输出要扫；写类不必扫', () => {
+test('闸门：除自写内容的工具外一律要扫（通用审核）', () => {
   for (const tool of ['read_file', 'grep', 'run_command', 'job_output', 'web_fetch']) {
     assert.equal(shouldScanOutput(tool), true, `${tool} 应当被扫描`)
   }
-  for (const tool of ['write_file', 'edit', 'delete_paths', 'list_jobs']) {
+  for (const tool of ['write_file', 'edit', 'delete_paths']) {
     assert.equal(shouldScanOutput(tool), false, `${tool} 不必扫`)
   }
 })

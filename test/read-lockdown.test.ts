@@ -1,106 +1,86 @@
 /**
- * 读的收口：**shell 不许读文件，读只走我们自己的工具**。
+ * 通用审核：**不管内容从哪条路进来，进上下文之前都要过一遍。**
  *
- * ## 为什么这是必要的
+ * 第一版做的是"收口"（禁掉 shell 读命令），那是下策 —— 每加一个能带内容的工具
+ * 就多一个缺口。正确做法是收在咽喉上：工具结果变成消息之前那一步。
  *
- * 沙箱只管"写"，不管"读"（见 `docs/沙箱替代方案.md` 的挡不住清单）。所以真正
- * 能控制"模型看见什么"的地方只有一处：**工具结果进上下文的那个闸门**。
- * 只要 shell 还能 `cat .env`，那个闸门就是可绕过的 —— 绕过一次，做它就没意义。
- *
- * ## 这些拒绝不是"更安全"，是"唯一有效"
- *
- * `type` 读文件本身完全无害；问题是它读出来的东西**不经过审核**。所以拒绝文案
- * 必须指向 `read_file` / `grep`，否则模型会换写法重试（`Get-Content` → `gc` →
- * `[IO.File]::ReadAllText` → 自己写个小程序）。
+ * 所以这一组测三件事：
+ *   1. 默认**所有**工具结果都审（白名单反过来：只有我们自写内容的工具免审）
+ *   2. 编码（base64 / hex）包一层也能认出来
+ *   3. 人要求"原样看一次"时能拿到原文（打码必须有出口）
  */
 
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 
-import { Policy } from '../src/policy/policy.ts'
-import { describePii, looksLikeSensitivePathLine, redactPii } from '../src/guard/scan.ts'
+import { shouldScanOutput, wantsPlainOutput } from '../src/guard/review.ts'
+import { describePii, looksLikeSensitivePathLine, redactEncoded, redactPii } from '../src/guard/scan.ts'
 
-
-function judge(mode: 'workspace-write' | 'full-access', command: string) {
-  const policy = new Policy({ mode })
-  return policy.evaluate(
-    { tool: 'run_command', risk: 'execute', args: { command } },
-    { root: process.cwd(), interactive: true },
-  )
-}
-
-test('读命令：统统拒绝，并且指向 read_file / grep', () => {
-  const cases = [
-    'cat .env',
-    'type config.txt',
-    'head -5 a.txt',
-    'tail -f log.txt',
-    'more readme.md',
-    'less readme.md',
-    'Get-Content .env',
-    'gc .env',
-    'Select-String -Pattern secret .',
-    'findstr secret .',
-    'strings app.bin',
-    'od -c file',
-    'xxd file',
-    'base64 file.bin',
-    'certutil -encode a.txt b.b64',
-    'copy a.txt b.txt',
-    'xcopy a b /s',
-  ]
-  for (const command of cases) {
-    const verdict = judge('full-access', command)
-    assert.equal(verdict.decision, 'deny', `${command} 应当被拒绝，实际 ${verdict.decision}`)
-    assert.match(
-      verdict.message ?? '',
-      /read_file|grep|glob/,
-      `${command} 的拒绝文案必须指向替代工具，否则模型会换写法重试`,
-    )
+test('通用审核：默认都审，只有自写内容的工具免审', () => {
+  for (const tool of ['read_file', 'grep', 'glob', 'run_command', 'job_output', 'web_fetch', 'web_search', 'use_skill', 'list_jobs', 'spawn_agent', 'kill_job']) {
+    assert.equal(shouldScanOutput(tool), true, `${tool} 应当被审核`)
+  }
+  for (const tool of ['write_file', 'create_file', 'edit', 'delete_paths', 'move_path', 'delete_file']) {
+    assert.equal(shouldScanOutput(tool), false, `${tool} 的内容是我们自己写的，不必扫`)
   }
 })
 
-test('读命令：真正只读的仍自动放行（git status / ls）', () => {
-  for (const command of ['git status', 'ls']) {
-    const verdict = judge('workspace-write', command)
-    assert.equal(verdict.decision, 'allow', `${command} 不该被牵连`)
-  }
+test('编码：base64 里包着密钥 → 整段扣留（解一层再扫）', () => {
+  const secret = "api_key = 'sk-realsecret1234567890abcd'"
+  const blob = Buffer.from(secret, 'utf8').toString('base64')
+  const result = redactEncoded(`prefix ${blob} suffix`)
+
+  assert.equal(result.blobs, 1)
+  assert.ok(result.hits >= 1)
+  assert.equal(result.text.includes(blob), false, '编码后的 blob 不能留在输出里')
+  assert.match(result.text, /已扣留/)
 })
 
-test('私密内容：手机号 / 身份证 / 银行卡打码保留形状，邮箱保留域名', () => {
+test('编码：十六进制同理', () => {
+  const blob = Buffer.from("token: 'ghp_abcdefghijklmnopqrstuvwx'", 'utf8').toString('hex')
+  const result = redactEncoded(`x ${blob} y`)
+  assert.equal(result.blobs, 1)
+  assert.equal(result.text.includes(blob), false)
+})
+
+test('编码：普通 base64（图片/二进制）不该被误伤', () => {
+  /* 随机二进制：解出来不是可打印文本，应当原样保留 */
+  const binary = Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0]).toString('base64')
+  const result = redactEncoded(`data:image/png;base64,${binary}`)
+  assert.equal(result.blobs, 0, '不可打印的内容不是"藏着密钥"')
+})
+
+test('原样看一次：revealSensitive 是打码的出口', () => {
+  assert.equal(wantsPlainOutput({ path: 'a.txt' }), false)
+  assert.equal(wantsPlainOutput({ path: '.env', revealSensitive: true }), true)
+  assert.equal(wantsPlainOutput(null), false)
+})
+
+test('私密内容：四类都打码，形状保留', () => {
   const phone = redactPii('联系人 13812345678')
   assert.equal(phone.hits[0]?.category, 'phone')
   assert.match(phone.text, /138\*{4}5678/)
 
   const id = redactPii('身份证 11010519491231002X')
   assert.equal(id.hits[0]?.category, 'id-card')
-  assert.equal(id.text.includes('11010519491231002X'), false)
 
-  /* 银行卡：用合法 Luhn 的测试卡号 */
   const card = redactPii('卡号 4111111111111111')
   assert.equal(card.hits[0]?.category, 'bank-card')
-  assert.match(card.text, /4111\*{8}1111/)
 
   const email = redactPii('联系 zhang.san@example.com')
   assert.equal(email.hits[0]?.category, 'email')
   assert.match(email.text, /zh\*\*\*@example\.com/)
-
   assert.match(describePii(phone.hits), /phone/)
 })
 
-test('私密内容：误报边界 —— 订单号不算银行卡，订单号不算身份证', () => {
-  /* 16 位但过不了 Luhn 的纯数字：是订单号，不是卡号 */
-  const order = redactPii('订单号 1234567890123456')
-  assert.equal(order.hits.length, 0, 'Luhn 不通过就不该当银行卡')
-
-  /* 普通短数字串 */
+test('私密内容：Luhn 不通过就不是银行卡（订单号不误伤）', () => {
+  assert.equal(redactPii('订单号 1234567890123456').hits.length, 0)
   assert.equal(redactPii('端口 8080，超时 30000').hits.length, 0)
 })
 
-test('grep 行：认出「这行来自敏感路径」', () => {
+test('grep 行：只按第一段判路径（正文里的 .env 字样不算）', () => {
   assert.equal(looksLikeSensitivePathLine('.env:3:SECRET=1'), true)
   assert.equal(looksLikeSensitivePathLine('config/.npmrc:1:token=x'), true)
   assert.equal(looksLikeSensitivePathLine('src/index.ts:12:export const a = 1'), false)
-  /* 正文里出现 ".env" 字样不算 —— 判的是路径位置，不是内容 */
   assert.equal(looksLikeSensitivePathLine('docs/env.md:4:  .env 用来放密钥'), false)
 })

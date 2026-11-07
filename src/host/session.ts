@@ -39,8 +39,8 @@ import {
 } from '../context/types.ts'
 import { collect } from '../model/collect.ts'
 import { computeCost } from '../model/cost.ts'
-import { describeHits, describePii, isSensitivePath, looksLikeSensitivePathLine, redactPii, scanText } from '../guard/scan.ts'
-import { shouldScanOutput, writtenPaths, type TaintStore } from '../guard/review.ts'
+import { describeHits, describePii, isSensitivePath, looksLikeSensitivePathLine, redactEncoded, redactPii, scanText } from '../guard/scan.ts'
+import { shouldScanOutput, wantsPlainOutput, writtenPaths, type TaintStore } from '../guard/review.ts'
 import { isScriptPath, loopWarningNote } from '../tools/loop-lint.ts'
 import type { Message, ToolCall, Usage } from '../model/types.ts'
 import type { ToolRegistry } from '../tools/registry.ts'
@@ -1430,15 +1430,30 @@ export class Session {
         .join('\n')
     }
 
+    /*
+     * 人要求的"原样看一次"。这是打码的出口 —— 没有出口的护栏会被整个关掉。
+     * 走这条路的输出**会原样进日志**，所以必须在事件里留下"谁要求过"。
+     */
+    if (wantsPlainOutput(args)) {
+      await this.#emit({ type: 'policy_decision', callId: 'reveal', tool, decision: 'allow', reason: 'reveal-sensitive', message: `${tool}：按用户要求原样显示（未打码，已进日志）` })
+      return { ...result, content: `〔按你的要求原样显示（未打码）〕\n\n${result.content}` }
+    }
+
     const scanned = scanText(content, {
       ...(wholeFile ? { wholeFile: true } : {}),
       ...(relPath === undefined ? {} : { pathHint: relPath }),
     })
 
-    /* 私密内容（手机号 / 身份证 / 银行卡 / 邮箱）：打码保留形状，和密钥分开处置 */
-    const pii = redactPii(scanned.text)
+    /*
+     * 解一层编码再扫：`base64 key.bin` 拿出来的是不可读 blob，正则认不出内容。
+     * 解开之后如果里面有密钥/私密内容，整个 blob 换掉（原文不留）。
+     */
+    const decoded = redactEncoded(scanned.text)
 
-    if (scanned.hits.length === 0 && pii.hits.length === 0) {
+    /* 私密内容（手机号 / 身份证 / 银行卡 / 邮箱）：打码保留形状，和密钥分开处置 */
+    const pii = redactPii(decoded.text)
+
+    if (scanned.hits.length === 0 && pii.hits.length === 0 && decoded.blobs === 0) {
       /* grep 的路径扣留可能一条内容规则都没命中 —— 那种情况也要把扣留后的正文交出去 */
       return content === result.content ? result : { ...result, content }
     }
