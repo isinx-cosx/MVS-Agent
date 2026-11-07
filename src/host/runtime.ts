@@ -66,6 +66,7 @@ import { createDefaultRegistry, JobRegistry, type ToolRegistry } from '../tools/
 import { isMaskedApiKey, type LocalModelConfig, type ModelConfig } from '../config/types.ts'
 import { LocalModelSupervisor, missingConfig, type LocalModelStatus } from './local-model.ts'
 import { TaintStore } from '../guard/review.ts'
+import { labelLow } from '../sandbox/label.ts'
 import { SessionStore } from './persistence.ts'
 import { rebuildMessages } from '../protocol/projection.ts'
 import { searchSessions, type SearchResult } from './search.ts'
@@ -707,6 +708,17 @@ export class Runtime {
 
     const recovery = createRecovery({ root: canonical })
     await recovery.init()
+
+    /*
+     * 打开沙箱时给工作区打 Low 完整性标签。
+     *
+     * 不打的话 Low 进程写不了这个目录 —— 现象是"命令能跑但什么也写不成"，
+     * 而那看起来像沙箱坏了。失败必须说出来（用户可能没权限改这个目录）。
+     */
+    if (process.env['MVS_SANDBOX'] === 'low-il') {
+      const labelled = labelLow([canonical])
+      if (!labelled.ok) process.stderr.write(`沙箱：${labelled.message}\\n`)
+    }
 
     // 后台作业也是**每个工作区一份**：作业的 cwd 落在这个工作区里，它写的东西
     // 也属于这个工作区。放在工作区这一层，才能让「有作业在跑 → 撤销不可信」
