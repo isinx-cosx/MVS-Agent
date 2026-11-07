@@ -99,6 +99,14 @@ const ConvertStringSidToSidW = advapi.func('int32 __stdcall ConvertStringSidToSi
 const CreateProcessAsUserW = advapi.func(
   'int32 __stdcall CreateProcessAsUserW(void *, str16, void *, void *, void *, int32, uint32, void *, str16, STARTUPINFOEXW *, PROCESS_INFORMATION *)',
 )
+/*
+ * 对照：`CreateProcessW`（不换令牌，只用当前令牌 + AppContainer 属性）。
+ * MS 文档说 CreateProcessAsUser 可以带 SECURITY_CAPABILITIES，但实测它一直 87；
+ * 换成 CreateProcess 至少能区分"属性写法错"和"AsUser 的限制"。
+ */
+const CreateProcessW2 = kernel.func(
+  'int32 __stdcall CreateProcessW(str16, void *, void *, void *, int32, uint32, void *, str16, STARTUPINFOEXW *, PROCESS_INFORMATION *)',
+)
 const GetCurrentProcess = kernel.func('void * __stdcall GetCurrentProcess()')
 const CreateFileW = kernel.func(
   'void * __stdcall CreateFileW(str16, uint32, uint32, SECURITY_ATTRIBUTES *, uint32, uint32, void *)',
@@ -170,12 +178,40 @@ async function runCase(label, args) {
 
   const sizeOut = [0]
   InitializeProcThreadAttributeList(null, 1, 0, sizeOut)
-  const attributes = Buffer.alloc(sizeOut[0])
+  /*
+   * 属性列表要求 8 字节对齐，而 Buffer.alloc 不保证 —— 对齐错位会让
+   * CreateProcessAsUser 报 ERROR_INVALID_PARAMETER (87)。这里自己切一段对齐的。
+   */
+  const rawAttributes = Buffer.alloc(sizeOut[0] + 16)
+  const alignOffset = (8 - (rawAttributes.byteOffset % 8)) % 8
+  const attributes = rawAttributes.subarray(alignOffset, alignOffset + sizeOut[0])
   const size2 = [sizeOut[0]]
-  InitializeProcThreadAttributeList(attributes, 1, 0, size2)
+  if (InitializeProcThreadAttributeList(attributes, 1, 0, size2) === 0) {
+    process.stdout.write(`${JSON.stringify({ ok: false, step: 'attrlist', error: GetLastError() })}\n`)
+    process.exit(1)
+  }
 
-  const capabilities = { AppContainerSid: sidOut[0], Capabilities: null, CapabilityCount: 0, Reserved: 0 }
-  UpdateProcThreadAttributeCaps(attributes, 0, BigInt(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES), capabilities, BigInt(koffi.sizeof(SECURITY_CAPABILITIES)), null, null)
+    /*
+   * CapabilityCount = 0 + Capabilities = null 可能是 87 的来源之一。
+   * MVS_PROBE_ONE_CAP=1 时给一个**无害**能力（registryRead），只是为了验证形状：
+   * 若能创建成功，说明 0 个能力这种写法不被接受。
+   */
+  let capabilities
+  if (process.env.MVS_PROBE_ONE_CAP === '1') {
+    const capSid = [null]
+    ConvertStringSidToSidW('S-1-15-3-1', capSid)
+    const capArray = Buffer.alloc(koffi.sizeof(SID_AND_ATTRIBUTES))
+    /* SID_AND_ATTRIBUTES { PSID Sid; DWORD Attributes; } —— SE_GROUP_ENABLED = 4 */
+    capArray.writeBigUInt64LE(BigInt(koffi.address(capSid[0])), 0)
+    capArray.writeUInt32LE(4, 8)
+    capabilities = { AppContainerSid: sidOut[0], Capabilities: capArray, CapabilityCount: 1, Reserved: 0 }
+  } else {
+    capabilities = { AppContainerSid: sidOut[0], Capabilities: null, CapabilityCount: 0, Reserved: 0 }
+  }
+  const updated = UpdateProcThreadAttributeCaps(attributes, 0, BigInt(PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES), capabilities, BigInt(koffi.sizeof(SECURITY_CAPABILITIES)), null, null)
+  if (updated === 0) {
+    return { case: label, created: false, step: 'update-attribute', error: GetLastError() }
+  }
 
   const line = Q + process.execPath + Q + ' ' + args.map((item) => Q + item + Q).join(' ')
   const lineBuffer = Buffer.concat([Buffer.from(line, 'utf16le'), Buffer.from([0, 0])])
@@ -193,7 +229,11 @@ async function runCase(label, args) {
   }
   const infoBuf = Buffer.alloc(koffi.sizeof(PROCESS_INFORMATION))
   const tokenToUse = process.env.MVS_PROBE_PLAINTOKEN === '1' ? token[0] : primary[0]
-  const created = CreateProcessAsUserW(tokenToUse, null, lineBuffer, null, null, 1, EXTENDED_STARTUPINFO_PRESENT, null, WORK, startup, infoBuf)
+  const inherit = process.env.MVS_PROBE_NOINHERIT === '1' ? 0 : 1
+  /* lpApplicationName 也填上：某些属性要求可执行文件名显式给出 */
+  const created = process.env.MVS_PROBE_CREATEPROC === '1'
+    ? CreateProcessW2(null, lineBuffer, null, null, inherit, EXTENDED_STARTUPINFO_PRESENT, null, WORK, startup, infoBuf)
+    : CreateProcessAsUserW(tokenToUse, process.execPath, lineBuffer, null, null, inherit, EXTENDED_STARTUPINFO_PRESENT, null, WORK, startup, infoBuf)
   if (created === 0) {
     return { case: label, created: false, error: GetLastError() }
   }
