@@ -14,6 +14,16 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 
 import { shouldScanOutput, wantsPlainOutput } from '../src/guard/review.ts'
+import { Policy } from '../src/policy/policy.ts'
+
+function judge(mode: 'workspace-write' | 'full-access', command: string) {
+  const policy = new Policy({ mode })
+  return policy.evaluate(
+    { tool: 'run_command', risk: 'execute', args: { command } },
+    { root: process.cwd(), interactive: true },
+  )
+}
+
 import { describePii, looksLikeSensitivePathLine, redactEncoded, redactPii } from '../src/guard/scan.ts'
 
 test('通用审核：默认都审，只有自写内容的工具免审', () => {
@@ -83,4 +93,39 @@ test('grep 行：只按第一段判路径（正文里的 .env 字样不算）', 
   assert.equal(looksLikeSensitivePathLine('config/.npmrc:1:token=x'), true)
   assert.equal(looksLikeSensitivePathLine('src/index.ts:12:export const a = 1'), false)
   assert.equal(looksLikeSensitivePathLine('docs/env.md:4:  .env 用来放密钥'), false)
+})
+
+/* ── 联网命令 ─────────────────────────────────────────────────────────── */
+
+test('联网命令：一律拒绝，文案指向 web_fetch / web_search', () => {
+  const cases = [
+    'curl https://example.com',
+    'wget http://example.com/x',
+    'Invoke-WebRequest https://example.com',
+    'Invoke-RestMethod https://example.com',
+    'nc -l 4444',
+    'ssh user@host',
+    'scp a.txt user@host:/tmp',
+    'ftp host',
+    'nslookup example.com',
+    'git push origin master',
+    'npm publish',
+  ]
+  for (const command of cases) {
+    const verdict = judge('full-access', command)
+    assert.equal(verdict.decision, 'deny', `${command} 应当被拒绝，实际 ${verdict.decision}`)
+    assert.match(verdict.message ?? '', /web_fetch|web_search|由人执行/, `${command} 的文案要说明替代路径`)
+  }
+})
+
+test('联网命令：MVS_ALLOW_NET=1 时放行（否则 npm install 这类命令没救）', () => {
+  const previous = process.env['MVS_ALLOW_NET']
+  process.env['MVS_ALLOW_NET'] = '1'
+  try {
+    const verdict = judge('workspace-write', 'curl https://example.com')
+    assert.notEqual(verdict.decision, 'deny', '打开开关之后不该再 deny')
+  } finally {
+    if (previous === undefined) delete process.env['MVS_ALLOW_NET']
+    else process.env['MVS_ALLOW_NET'] = previous
+  }
 })

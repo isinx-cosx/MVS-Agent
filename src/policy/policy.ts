@@ -417,7 +417,12 @@ export class Policy {
     }
 
     // ── 3. 规则 ──────────────────────────────────────────────────────
-    const fromRules = this.#matchRules(request, key, hits.length > 0)
+    /*
+     * 联网命令的逃生开关。`npm install` 这类命令本来就要联网，
+     * 一整片 deny 而不给出口，用户会去改源码或者干脆关掉整个策略层。
+     */
+    const allowNetwork = process.env['MVS_ALLOW_NET'] === '1'
+    const fromRules = this.#matchRules(request, key, hits.length > 0, allowNetwork)
 
     // ── 4. 默认 ──────────────────────────────────────────────────────
     const base = fromRules ?? this.#defaultDecision(request, target, rootAbs, spec)
@@ -630,8 +635,10 @@ export class Policy {
     request: PolicyRequest,
     key: string,
     allowBlocked: boolean,
+    allowNetwork: boolean,
   ): PolicyVerdict | null {
     let candidates = this.#rules.filter((rule) => ruleMatches(rule, request.tool, key))
+    if (allowNetwork) candidates = candidates.filter((rule) => rule.tag !== 'network')
     if (allowBlocked) {
       // 熔断命中：allow 规则被剥夺批准权。deny 与 ask 仍然有效。
       candidates = candidates.filter((rule) => rule.decision !== 'allow')

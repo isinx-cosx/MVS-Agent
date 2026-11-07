@@ -39,6 +39,14 @@ export interface PolicyRule {
    */
   pattern: string
   decision: Decision
+  /**
+   * 分类标签。目前只有 `network`。
+   *
+   * 存在的理由：联网命令**必须能整体放行**（`npm install` 就联网，很多人天天用）。
+   * 没有这个开关，用户只能去改源码 —— 那种护栏最后会被整段删掉。
+   * 打开方式：环境变量 `MVS_ALLOW_NET=1`。
+   */
+  tag?: 'network'
   note?: string
 }
 
@@ -256,7 +264,40 @@ export const DEFAULT_DENY_RULES: PolicyRule[] = [
   { pattern: 'run_command:mv ', decision: 'deny', note: '要移动文件请用 move_path（可撤销）' },
   { pattern: 'run_command:move ', decision: 'deny', note: '要移动文件请用 move_path' },
   { pattern: 'run_command:ren ', decision: 'deny', note: '要重命名请用 move_path' },
-  { pattern: 'run_command:git clean', decision: 'deny', note: '会删未跟踪文件；要清理请用 delete_paths 明确列出' },
+
+  /*
+   * ★ 联网命令：**一律拒，联网只能走 `web_fetch` / `web_search`**。
+   *
+   * 理由和读文件那条不同 —— 这条不是"没审核"，而是**沙箱只限制写、不限制网络**
+   * （见 docs/沙箱替代方案.md 的挡不住清单）。一条命令可以读到用户目录里的密钥，
+   * 然后 `curl -F` 发出去，而它的 stdout 只有 "OK" —— 审核连看都看不到。
+   *
+   * 所以挡在"发起连接"这一步，而不是挡在"看输出"那一步。
+   *
+   * ⚠️ 它挡不住解释器：`node -e`、`python -c`、PowerShell 里任何一行都能开 socket。
+   * 那需要网络命名空间或过滤驱动，不是这一层能做的。这一条写在这里，是因为
+   * 下一个人一定会问"那 node 呢"。
+   */
+  { pattern: 'run_command:curl ', decision: 'deny', note: '联网请用 web_fetch / web_search', tag: 'network' },
+  { pattern: 'run_command:wget ', decision: 'deny', note: '联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:Invoke-WebRequest', decision: 'deny', note: '联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:Invoke-RestMethod', decision: 'deny', note: '联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:iwr ', decision: 'deny', note: '联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:irm ', decision: 'deny', note: '联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:Start-BitsTransfer', decision: 'deny', note: '联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:Test-NetConnection', decision: 'deny', note: '探测网络请说明目的，由人执行', tag: 'network' },
+  { pattern: 'run_command:Resolve-DnsName', decision: 'deny', note: 'DNS 查询也是联网；联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:nslookup', decision: 'deny', note: 'DNS 查询也是联网；联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:ssh ', decision: 'deny', note: '远程登录请由人执行（或让用户用 web_fetch 取资料）', tag: 'network' },
+  { pattern: 'run_command:scp ', decision: 'deny', note: '文件传输会把内容发出去；联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:sftp ', decision: 'deny', note: '文件传输会把内容发出去；联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:ftp ', decision: 'deny', note: '文件传输会把内容发出去；联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:tftp ', decision: 'deny', note: '文件传输会把内容发出去；联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:nc ', decision: 'deny', note: '原始 socket 可以发任何东西；联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:ncat ', decision: 'deny', note: '原始 socket 可以发任何东西；联网请用 web_fetch', tag: 'network' },
+  { pattern: 'run_command:telnet ', decision: 'deny', note: '远程连接请由人执行', tag: 'network' },
+  { pattern: 'run_command:npm publish', decision: 'deny', note: '发布包是对外的，请由人执行', tag: 'network' },
+  { pattern: 'run_command:git push', decision: 'deny', note: '推送到远端是对外的，请由人执行', tag: 'network' },  { pattern: 'run_command:git clean', decision: 'deny', note: '会删未跟踪文件；要清理请用 delete_paths 明确列出' },
   { pattern: 'run_command:git rm', decision: 'deny', note: '要删文件请用 delete_paths' },
   { pattern: 'run_command:robocopy', decision: 'deny', note: '/MIR 会清空目标目录' },
   { pattern: 'run_command:rsync --delete', decision: 'deny', note: '会清空目标目录' },
