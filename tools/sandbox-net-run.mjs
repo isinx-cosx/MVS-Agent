@@ -168,15 +168,35 @@ const errPath = path.join(dir, 'stderr.txt')
 
 /* 给工作目录授权：容器读不到工作区就什么都干不了（实测 Cannot find module） */
 const withAppContainer = process.env['MVS_SANDBOX_NET'] !== '1'
-let grantedStatus = 'skipped'
-if (withAppContainer && cwd !== null) {
-  const granted = spawnSync('icacls', [cwd, '/grant', '*S-1-15-2-1:(OI)(CI)M'], {
-    stdio: 'ignore',
-    windowsHide: true,
-    timeout: 15_000,
-  })
-  grantedStatus = granted.status === 0 ? 'ok' : `failed(${granted.status})`
+/*
+ * 授权分两类：**写只给工作区（+ TEMP），读给整个用户目录**。
+ *
+ * 读是刻意**不设限**的：工具链要读的东西本来就在工作区之外（`~/.npmrc`、
+ * `~/.gitconfig`、包缓存、System32 的 dll…），卡住读只会让沙箱不可用。
+ *
+ * 挡泄密靠的不是"读不到"，而是：
+ *   · 网络被 AppContainer 切断（没有 internetClient）
+ *   · 读出的内容进上下文之前过输出审核（打码 / 扣留 / taint）
+ */
+const grants = []
+if (withAppContainer) {
+  const add = (target, rights) => {
+    const spec = rights === 'M' ? '*S-1-15-2-1:(M)' : '*S-1-15-2-1:(OI)(CI)' + rights
+    const probe = spawnSync('icacls', [target, '/grant', spec], {
+      windowsHide: true,
+      timeout: 15000,
+    })
+    grants.push({ target, rights, ok: probe.status === 0 })
+  }
+  if (cwd !== null) add(cwd, 'M')
+  /* TEMP 与「整个用户目录可读」的授权由 npm run sandbox:grant 一次性做完 ——
+     它们递归几千个文件，每条命令都做一次太慢（实测会超时） */
 }
+const grantedStatus = grants.length === 0
+  ? 'skipped'
+  : grants.every((item) => item.ok)
+    ? 'ok(' + grants.length + ')'
+    : 'failed(' + grants.filter((item) => !item.ok).map((item) => item.target).join(',') + ')'
 
 let attributes = null
 let attributeApplied = 'skipped'
