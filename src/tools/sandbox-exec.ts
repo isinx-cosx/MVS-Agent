@@ -34,6 +34,8 @@ export interface SandboxRunInput {
   timeoutMs: number
   maxProcesses?: number
   maxMemoryMb?: number
+  /* 写盘字节上限（MB）：超过就杀整棵树 —— 写盘填满的正面防线 */
+  maxWriteMb?: number
   cpuSeconds?: number
 }
 
@@ -86,6 +88,7 @@ export async function runInSandbox(input: SandboxRunInput): Promise<SandboxRunOu
     String(input.timeoutMs),
     ...(input.maxProcesses === undefined ? [] : ['--max-processes', String(input.maxProcesses)]),
     ...(input.maxMemoryMb === undefined ? [] : ['--max-memory-mb', String(input.maxMemoryMb)]),
+    ...(input.maxWriteMb === undefined ? [] : ['--max-write-mb', String(input.maxWriteMb)]),
     ...(input.cpuSeconds === undefined ? [] : ['--cpu-seconds', String(input.cpuSeconds)]),
     '--',
     input.command,

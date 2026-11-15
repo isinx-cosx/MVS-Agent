@@ -189,6 +189,9 @@ export const runCommandTool: Tool<RunCommandArgs> = {
         ...(process.env.MVS_SANDBOX_MAX_MEMORY_MB === undefined
           ? {}
           : { maxMemoryMb: Number(process.env.MVS_SANDBOX_MAX_MEMORY_MB) }),
+        ...(process.env.MVS_SANDBOX_MAX_WRITE_MB === undefined
+          ? {}
+          : { maxWriteMb: Number(process.env.MVS_SANDBOX_MAX_WRITE_MB) }),
       })
 
       if (sandboxed.ok !== true) {
