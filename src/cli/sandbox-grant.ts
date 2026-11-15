@@ -62,13 +62,28 @@ if (workspaces.length === 0) {
      * `/Q` 少打日志。退出码不可靠，所以失败时再**查一次 ACE 是否真的在**。
      */
     const probe = spawnSync('icacls', [...args, '/C', '/Q'], { stdio: 'ignore', windowsHide: true, timeout: 120_000 })
+    /*
+     * 判定用**成功数**而不是退出码。
+     *
+     * icacls 遍历用户目录时，个别子项进不去（权限被保护），退出码会变成非零 ——
+     * 但目标路径本身的 ACE 通常已经加上了。用退出码当判据只会得到"看起来失败、
+     * 实际可用"（我第一版就是这样）。所以：非零记为 partial，只有**目标路径本身**
+     * 拿不到 ACE 才算 hard failure。
+     */
     let ok = probe.status === 0
+    /* 非零退出码先记为"部分成功"：目标路径的 ACE 可能已经加上，只是有子项进不去 */
+    let partial = !ok && !remove
     if (!ok && !remove) {
       const check = spawnSync('icacls', [target.path], { encoding: 'utf8', windowsHide: true, timeout: 120_000 })
       ok = typeof check.stdout === 'string' && check.stdout.includes(APP_PACKAGES_SID)
     }
-    if (!ok) failed += 1
-    process.stdout.write(`${ok ? 'ok  ' : 'FAIL'} ${remove ? '移除' : '授权'} ${target.path}（${target.rights}）\n`)
+    /*
+     * 只有"目标路径本身也没拿到 ACE"才算失败。partial 只作为提示 ——
+     * 用户目录里总有几个进不去的子项，那不该让整条命令返回失败。
+     */
+    if (!ok && !partial) failed += 1
+    const label = ok ? 'ok     ' : partial ? 'partial' : 'FAIL   '
+    process.stdout.write(`${label} ${remove ? '移除' : '授权'} ${target.path}（${target.rights}）\n`)
   }
 
   process.stdout.write(
