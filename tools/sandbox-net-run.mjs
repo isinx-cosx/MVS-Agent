@@ -147,6 +147,7 @@ const EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 const CREATE_NO_WINDOW = 0x08000000
 const STARTF_USESTDHANDLES = 0x00000100
 const PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 0x00020009
+const PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
 const GENERIC_WRITE = 0x40000000
 const FILE_SHARE_ALL = 0x00000007
 const OPEN_ALWAYS = 4
@@ -187,12 +188,12 @@ if (withAppContainer) {
   if (sidOut[0] === null) DeriveAppContainerSidFromAppContainerName(profileName, sidOut)
 
   const sizeOut = [0]
-  InitializeProcThreadAttributeList(null, 1, 0, sizeOut)
+  InitializeProcThreadAttributeList(null, 2, 0, sizeOut)
   /* 属性列表要求 8 字节对齐，Buffer.alloc 不保证 */
   const raw = Buffer.alloc(sizeOut[0] + 16)
   const align = (8 - (raw.byteOffset % 8)) % 8
   attributes = raw.subarray(align, align + sizeOut[0])
-  InitializeProcThreadAttributeList(attributes, 1, 0, [sizeOut[0]])
+  InitializeProcThreadAttributeList(attributes, 2, 0, [sizeOut[0]])
   /* SECURITY_CAPABILITIES 手工布局：传 JS 对象会让 Windows 读到坏指针 */
   const capsBuf = Buffer.alloc(24)
   if (sidOut[0] !== null) capsBuf.writeBigUInt64LE(BigInt(koffi.address(sidOut[0])), 0)
@@ -213,6 +214,29 @@ const inheritable = {
 }
 const outHandle = CreateFileW(outPath, GENERIC_WRITE, FILE_SHARE_ALL, inheritable, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, null)
 const errHandle = CreateFileW(errPath, GENERIC_WRITE, FILE_SHARE_ALL, inheritable, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, null)
+
+/*
+ * HANDLE_LIST：只把 stdout/stderr 两个句柄继承下去。
+ *
+ * 不加这条时，父进程里任何**可继承**句柄子进程都能拿到（日志文件、socket）——
+ * 那是真实的逃逸面：写日志、用已有连接发数据都不需要打开新文件。
+ *
+ * 位置有讲究：属性列表在句柄之前就建好了（count = 2），这一条在句柄之后补 ——
+ * 加属性的顺序无所谓，只要都在 CreateProcess 之前即可。
+ */
+let handlesListed = 'skipped'
+if (attributes !== null) {
+  const pointerSize = koffi.sizeof('void *')
+  const handleList = Buffer.alloc(pointerSize * 2)
+  handleList.writeBigUInt64LE(BigInt(koffi.address(outHandle)), 0)
+  handleList.writeBigUInt64LE(BigInt(koffi.address(errHandle)), pointerSize)
+  handlesListed =
+    UpdateProcThreadAttribute(
+      attributes, 0, BigInt(PROC_THREAD_ATTRIBUTE_HANDLE_LIST), handleList, BigInt(handleList.length), null, null,
+    ) !== 0
+      ? 'listed'
+      : `failed(${GetLastError()})`
+}
 
 const line = [command, ...commandArgs].map((item) => Q + item + Q).join(' ')
 const lineBuffer = Buffer.concat([Buffer.from(line, 'utf16le'), Buffer.from([0, 0])])
@@ -247,6 +271,7 @@ const report = {
   ok: created !== 0,
   network: withAppContainer ? 'blocked' : 'allowed',
   granted: grantedStatus,
+  handles: handlesListed,
   attribute: attributeApplied,
 }
 
