@@ -39,7 +39,8 @@ test('沙箱：命令在 Job 里跑，输出与退出码都回来', async () => 
       const data = result.data as { sandbox?: string; exitCode?: number; writeBytes?: number }
       assert.equal(data.sandbox, 'low-il')
       assert.equal(data.exitCode, 0)
-      assert.equal(typeof data.writeBytes, 'number')
+      /* 断网执行器（AppContainer）不报写字节 —— 那是带 Job 的那个执行器才有的度量 */
+      assert.ok(data.writeBytes === undefined || typeof data.writeBytes === 'number')
     })
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -81,7 +82,8 @@ test('沙箱：写字节计数能观测到（1 MB 写入被计量，或写入被
        * 目录没打 Low 标签时写入会被拒（exitCode 非 0）—— 那也是正确行为：
        * 说明「默认拒绝」。两种结果的共同点是 writeBytes 必须是数字。
        */
-      assert.equal(typeof data.writeBytes, 'number')
+      /* 断网执行器（AppContainer）不报写字节 —— 那是带 Job 的那个执行器才有的度量 */
+      assert.ok(data.writeBytes === undefined || typeof data.writeBytes === 'number')
       if (result.ok) assert.ok((data.writeBytes ?? 0) >= 1024 * 1024, `writeBytes=${data.writeBytes}`)
       else assert.match(result.content, /Access is denied|EPERM|denied/i)
     })
@@ -109,6 +111,24 @@ test('沙箱：关闭时行为完全不改变（默认值不能悄悄变）', as
     const data = result.data as { sandbox?: string; writeBytes?: number }
     assert.equal(data.sandbox, undefined, '没开沙箱时不该有 sandbox 字段')
     assert.equal(data.writeBytes, undefined)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('沙箱：默认断网 —— 命令里的 fetch 拿不到网', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvs-sbxtool-'))
+  try {
+    await withSandbox(async () => {
+      const script =
+        "fetch('https://example.com').then(()=>console.log('NET-OK')).catch((e)=>console.log('NET-BLOCKED ' + (e.cause?.code ?? e.code)))"
+      const result = await runCommandTool.run(
+        { command: process.execPath, args: ['-e', script], timeoutMs: 30_000 },
+        ctx(root),
+      )
+      assert.match(result.content, /NET-BLOCKED/, `没有断网：${result.content.slice(0, 300)}`)
+      assert.equal(result.content.includes('NET-OK'), false)
+    })
   } finally {
     await rm(root, { recursive: true, force: true })
   }

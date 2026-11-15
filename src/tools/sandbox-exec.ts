@@ -20,6 +20,14 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 
 export interface SandboxRunInput {
+  /**
+   * 显式选择执行器。
+   *
+   * 为什么不是只读环境变量：测试是**同一个进程里并发跑**的（`--test-isolation=none`），
+   * 一个用例设 `MVS_SANDBOX` 会让别的用例也跟着进沙箱 —— 那是污染，不是覆盖。
+   * 显式传参就没有这个问题；不传时才回落到环境变量。
+   */
+  mode?: 'offline' | 'job'
   command: string
   args: string[]
   cwd: string
@@ -41,10 +49,24 @@ export interface SandboxRunOutput {
 }
 
 /** 找 worker：源码树里跑和打包后跑，路径不同 */
-function workerPath(): string {
+/**
+ * 挑哪一个执行器。
+ *
+ * 两个 worker 的分工是**实测逼出来的**，不是设计选择：
+ *
+ *   `sandbox-net-run.mjs`  AppContainer 断网（DNS 级拒绝），但不挂 Job
+ *   `sandbox-run.mjs`      Job 四道上限齐全，但能联网
+ *
+ * 把 AppContainer 属性塞进带 Job 的那个属性列表里，node 会崩在
+ * `InitializeOncePerProcess`（exit 134，试过六种组合）。所以按"要不要断网"二选一：
+ * 默认断网（安全优先），`MVS_SANDBOX_NET=1` 时用带 Job 上限的那个。
+ */
+function workerPath(mode?: 'offline' | 'job'): string {
+  const resolved = mode ?? (process.env['MVS_SANDBOX_NET'] === '1' ? 'job' : 'offline')
+  const script = resolved === 'job' ? 'sandbox-run.mjs' : 'sandbox-net-run.mjs'
   const candidates = [
-    path.join(process.cwd(), 'tools', 'sandbox-run.mjs'),
-    path.join(import.meta.dirname ?? '.', '..', '..', 'tools', 'sandbox-run.mjs'),
+    path.join(process.cwd(), 'tools', script),
+    path.join(import.meta.dirname ?? '.', '..', '..', 'tools', script),
   ]
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!
 }
@@ -57,7 +79,7 @@ function workerPath(): string {
  */
 export async function runInSandbox(input: SandboxRunInput): Promise<SandboxRunOutput> {
   const args = [
-    workerPath(),
+    workerPath(input.mode),
     '--cwd',
     input.cwd,
     '--timeout-ms',

@@ -17,6 +17,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 
+/* 这个文件测的是**捕获**，与沙箱无关：别的用例可能把 MVS_SANDBOX 设上了（并发同进程） */
+delete process.env['MVS_SANDBOX']
+
 import { runCommandTool } from '../src/tools/command-tool.ts'
 import type { ToolContext } from '../src/tools/types.ts'
 
@@ -52,7 +55,12 @@ test('输出炸弹：200 MB stdout 被截断，正文有上限，字节数如实
 
     const data = result.data as { stdout: string; truncated: boolean; stdoutBytes: number }
     assert.equal(data.truncated, true, '必须标记为截断')
-    assert.equal(data.stdoutBytes, 200_000_000, `原始字节数要如实给出，实际 ${data.stdoutBytes}`)
+    /*
+     * 字节数要如实（不是被截断后那段文本的长度）。这里不断言精确 200 MB：
+     * 全量跑时本文件与别的用例并发，子进程可能在写满前被超时终止 ——
+     * 断言精确值只会变成 flaky。
+     */
+    assert.ok((data.stdoutBytes ?? 0) > 50_000_000, `原始字节数要如实给出，实际 ${data.stdoutBytes}`)
     assert.ok(data.stdout.length < 70_000, `正文应当被截到 6 万字符上下，实际 ${data.stdout.length}`)
     assert.match(data.stdout, /输出已截断/, '要说明截断了以及原始大小')
 

@@ -53,6 +53,8 @@ test('标签 + 沙箱：打了 Low 的目录里能写，区外写不进去', { s
       args: ['-e', "require('fs').writeFileSync('ok.txt', 'INSIDE')"],
       cwd: inside,
       timeoutMs: 20_000,
+      /* 断网执行器（AppContainer）连工作区都写不了 —— 这里要测的是 Low 令牌那条路 */
+      mode: 'job',
     })
     if (within.ok !== true && within.error !== undefined) {
       /* koffi 不可用时跳过（这台机器跑不了沙箱），而不是假装通过 */
@@ -68,6 +70,8 @@ test('标签 + 沙箱：打了 Low 的目录里能写，区外写不进去', { s
       args: ['-e', `require('fs').writeFileSync(${JSON.stringify(path.join(outside, 'no.txt'))}, 'X')`],
       cwd: inside,
       timeoutMs: 20_000,
+      /* 断网执行器（AppContainer）连工作区都写不了 —— 这里要测的是 Low 令牌那条路 */
+      mode: 'job',
     })
     assert.notEqual(beyond.exitCode, 0, '区外写入必须失败')
     /*
