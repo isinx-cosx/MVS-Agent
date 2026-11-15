@@ -25,6 +25,7 @@
  * 输出一行 JSON：`{ ok, exitCode, stdout, stderr, network }`
  */
 
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -141,6 +142,13 @@ const outHandle = CreateFileW(outPath, GENERIC_WRITE, FILE_SHARE_ALL, inheritabl
 const errHandle = CreateFileW(errPath, GENERIC_WRITE, FILE_SHARE_ALL, inheritable, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, null)
 
 const withAppContainer = process.env['MVS_SANDBOX_NET'] !== '1'
+let grantedStatus = 'skipped'
+/* 给工作目录授权：容器读不到工作区就什么都干不了（实测 Cannot find module）。
+ * 固定 SID S-1-15-2-1 = ALL APPLICATION PACKAGES，只对 AppContainer 进程生效。 */
+if (withAppContainer && cwd !== null) {
+  const g = spawnSync('icacls', [cwd, '/grant', '*S-1-15-2-1:(OI)(CI)M'], { stdio: 'ignore', windowsHide: true, timeout: 15000 })
+  grantedStatus = g.status === 0 ? 'ok' : 'failed(' + g.status + ')'
+}
 let attributes = null
 if (withAppContainer) {
   const sizeOut = [0]
@@ -196,7 +204,7 @@ const created = CreateProcessW(
   infoBuf,
 )
 
-const report = { ok: created !== 0, network: withAppContainer ? 'blocked' : 'allowed', sid: sidOut[0] !== null }
+const report = { ok: created !== 0, network: withAppContainer ? 'blocked' : 'allowed', granted: grantedStatus, sid: sidOut[0] !== null }
 if (created === 0) {
   report.error = GetLastError()
 } else {

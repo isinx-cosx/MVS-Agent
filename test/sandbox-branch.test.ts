@@ -6,11 +6,13 @@
  */
 
 import { strict as assert } from 'node:assert'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 
+import { labelLow, unlabelLow } from '../src/sandbox/label.ts'
+import { runInSandbox } from '../src/tools/sandbox-exec.ts'
 import { runCommandTool } from '../src/tools/command-tool.ts'
 import type { ToolContext } from '../src/tools/types.ts'
 
@@ -66,28 +68,28 @@ test('沙箱：非零退出码是失败（沙箱自己正常 ≠ 命令成功）
   }
 })
 
-test('沙箱：写字节计数能观测到（1 MB 写入被计量，或写入被拒绝）', async () => {
+test('写字节计数：带 Job 的执行器能精确计量（断网执行器没有这个度量）', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mvs-sbxtool-'))
   try {
-    await withSandbox(async () => {
-      const result = await runCommandTool.run(
-        {
-          command: process.execPath,
-          args: ['-e', "require('fs').writeFileSync('big.bin', Buffer.alloc(1048576))"],
-        },
-        ctx(root),
-      )
-      const data = result.data as { writeBytes?: number }
+    /* job 执行器用的是受限+Low 令牌：目录不打 Low 标签，1 MB 写进去会 EPERM */
+    labelLow([root])
+    /* 这个度量属于 job 执行器；默认的断网执行器没有 Job，也量不了 */
+    const result = await runInSandbox({
+      command: process.execPath,
       /*
-       * 目录没打 Low 标签时写入会被拒（exitCode 非 0）—— 那也是正确行为：
-       * 说明「默认拒绝」。两种结果的共同点是 writeBytes 必须是数字。
+       * 用双引号包 JS：里面的单引号就不用转义。
+       * （这里刻意不用 `node -e "..."` 之外的写法，免得再被引号层数绕进去。）
        */
-      /* 断网执行器（AppContainer）不报写字节 —— 那是带 Job 的那个执行器才有的度量 */
-      assert.ok(data.writeBytes === undefined || typeof data.writeBytes === 'number')
-      if (result.ok) assert.ok((data.writeBytes ?? 0) >= 1024 * 1024, `writeBytes=${data.writeBytes}`)
-      else assert.match(result.content, /Access is denied|EPERM|denied/i)
+      args: ['-e', "require('fs').writeFileSync('big.bin', Buffer.alloc(1048576))"],
+      cwd: root,
+      timeoutMs: 30_000,
+      mode: 'job',
     })
+    assert.equal(typeof result.writeBytes, 'number', 'writeBytes=' + String(result.writeBytes))
+    assert.ok((result.writeBytes ?? 0) >= 1024 * 1024, 
+'writeBytes=' + String(result.writeBytes))
   } finally {
+    unlabelLow([root])
     await rm(root, { recursive: true, force: true })
   }
 })
@@ -128,6 +130,40 @@ test('沙箱：默认断网 —— 命令里的 fetch 拿不到网', async () =>
       )
       assert.match(result.content, /NET-BLOCKED/, `没有断网：${result.content.slice(0, 300)}`)
       assert.equal(result.content.includes('NET-OK'), false)
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('沙箱：默认断网模式下仍然能读写工作区（授权生效）', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvs-sbxtool-'))
+  try {
+    await writeFile(path.join(root, 'a.txt'), 'hello-from-workspace', 'utf8')
+    await withSandbox(async () => {
+      /* 读：不授权的话会报 Cannot find module / EACCES */
+      const read = await runCommandTool.run(
+        {
+          command: process.execPath,
+          args: ['-e', "process.stdout.write(require('fs').readFileSync('a.txt','utf8'))"],
+          cwd: root,
+        },
+        ctx(root),
+      )
+      assert.equal(read.ok, true, read.content.slice(0, 300))
+      assert.match(read.content, /hello-from-workspace/)
+
+      /* 写：区内可写 */
+      const write = await runCommandTool.run(
+        {
+          command: process.execPath,
+          args: ['-e', "require('fs').writeFileSync('b.txt','ok');console.log('WROTE')"],
+          cwd: root,
+        },
+        ctx(root),
+      )
+      assert.equal(write.ok, true, write.content.slice(0, 300))
+      assert.equal(await readFile(path.join(root, 'b.txt'), 'utf8'), 'ok')
     })
   } finally {
     await rm(root, { recursive: true, force: true })
