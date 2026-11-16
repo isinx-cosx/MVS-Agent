@@ -24,12 +24,12 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import type { SecretCategory, SecretHit } from './scan.ts'
+import type { PiiCategory, SecretCategory, SecretHit } from './scan.ts'
 
 export interface TaintRecord {
   /** 相对工作区根的路径 */
   path: string
-  category: SecretCategory
+  category: SecretCategory | PiiCategory
   /** 那次命中的简要说明（不含具体值） */
   note: string
   at: string

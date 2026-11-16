@@ -1508,7 +1508,9 @@ export class Session {
      * 那就不该按"原文"去改它 —— 否则打码串会被写回文件，真值永久丢失。
      */
     if (this.#deps.taint !== undefined && relPath !== undefined && tool === 'read_file') {
-      await this.#deps.taint.add(relPath, scanned.hits[0]!.category, '读取时命中敏感内容')
+      const hit = scanned.hits[0] ?? pii.hits[0]
+      /* PII 命中时 scanned.hits 是空的 —— 直接取 [0].category 会抛（实测：error 事件） */
+      if (hit !== undefined) await this.#deps.taint.add(relPath, hit.category, '读取时命中敏感内容')
     }
 
     const parts: string[] = []

@@ -230,3 +230,22 @@ test('闸门：clear 之后可以改（阻塞态必须有出口）', async () =>
   )
 })
 
+
+test('审核不挑文件名：普通路径里的私密内容同样被打码', async () => {
+  await withSession(
+    {
+      /* 刻意用一个完全不敏感的名字 —— 审核靠内容，不靠路径 */
+      files: { 'notes.txt': '张三 13812345678' + String.fromCharCode(10) },
+      steps: [{ tool: { name: 'read_file', args: { path: 'notes.txt' } } }, { say: '好了' }],
+    },
+    async ({ session, events }) => {
+      await session.sendUserMessage('看看 notes.txt')
+      const contents = settledContents(await events())
+      assert.equal(contents.length, 1, '应当有一条 tool_settled')
+      const text = contents[0]!
+      assert.match(text, /输出审核/)
+      assert.equal(text.includes('13812345678'), false, '手机号不能原样出现')
+      assert.match(text, /138\*{4}5678/, '打码要保留形状')
+    },
+  )
+})
