@@ -1299,6 +1299,13 @@ export class Session {
       ...(this.#deps.plugins === undefined ? {} : { pluginEnv: this.#deps.plugins.pluginEnv() }),
       /* 子代理能力由会话注入（工具层不自己造会话）*/
       spawnAgent: (agentInput) => this.#spawnAgent(agentInput),
+      /*
+       * 工具警告：不失败、但要说出来的事（例如"后台作业不走沙箱"）。
+       * 走 error 事件太重，走普通输出又会被淹没 —— 这里用 message 字段明确的提示。
+       */
+      warn: (message: string) => {
+        void this.#emit({ type: 'error', message: `工具警告：${message}` })
+      },
     }
     /*
      * ★ taint 拦截：**模型没看过内容的文件，不许盲改**。

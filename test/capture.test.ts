@@ -39,6 +39,8 @@ async function captureDirs(): Promise<string[]> {
 }
 
 test('输出炸弹：80 MB stdout 被截断，正文有上限，字节数如实给出', async () => {
+  /* 显式压低磁盘底线：别的用例可能把 MVS_DISK_FLOOR_MB 抬高（同进程并发），那会让本用例的预检直接拒绝 */
+  process.env['MVS_DISK_FLOOR_MB'] = '1'
   const root = await tempRoot()
   const before = await captureDirs()
   try {

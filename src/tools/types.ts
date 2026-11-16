@@ -103,6 +103,8 @@ export interface ToolContext {
    * 一个用例设 MVS_SANDBOX 会污染别的用例（实测：捕获测试被拖进沙箱，慢到超时）。
    */
   sandboxOff?: boolean
+  /** 让工具报一条警告（不失败）：用于「这次做了，但你要知道代价」的场景 */
+  warn?: (message: string) => void
   maxOutputChars?: number
   /**
    * 后台作业注册表。

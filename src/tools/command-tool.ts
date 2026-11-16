@@ -189,6 +189,16 @@ export const runCommandTool: Tool<RunCommandArgs> = {
      * ★ 后台作业**不走**沙箱：作业要活过这条命令，而 worker 的生命周期是这一条命令；
      * 把作业塞进 job 会随 worker 退出被 KILL_ON_JOB_CLOSE 一起收掉。
      */
+    /*
+     * 后台作业**不走**沙箱：作业要活过这条命令，而 worker 的生命周期就是这条命令。
+     * 这不是遗漏，是结构限制 —— 但必须让人看见，否则会以为作业也在防护里。
+     */
+    if (args.background === true && sandboxEnabled() && ctx.sandboxOff !== true) {
+      ctx.warn?.(
+        '后台作业不走沙箱：它能读写沙箱之外的位置，也不受 Job 上限约束。' +
+          ' 要在沙箱里跑，请用前台命令（run_command 不带 background）。',
+      )
+    }
     if (sandboxEnabled() && ctx.sandboxOff !== true && args.background !== true) {
       const sandboxed = await runInSandbox({
         command: args.command,
@@ -231,12 +241,21 @@ export const runCommandTool: Tool<RunCommandArgs> = {
         })
       }
 
+      /*
+       * 断网导致的失败要**给出路**：沙箱默认断网，`npm install` 这类命令会
+       * 报 ENOTFOUND/EAI_AGAIN。不说明的话用户只会以为命令本身坏了。
+       */
+      const networkFailure =
+        sandboxed.network === 'blocked' && /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|getaddrinfo/i.test(String(sandboxed.stderr ?? ''))
+      const networkNote = networkFailure
+        ? '这条命令需要联网，但沙箱默认断网。要放行：用 MVS_SANDBOX_NET=1 启动 daemon（装依赖那类场景），或者把需要联网的步骤交给 web_fetch。'
+        : null
       const content = composeContent(
         sandboxed.exitCode ?? null,
         null,
         sandboxed.stdout ?? '',
         sandboxed.stderr ?? '',
-        sandboxed.timedOut === true ? '命令超时，整棵进程树已被终止' : undefined,
+        networkNote ?? (sandboxed.timedOut === true ? '命令超时，整棵进程树已被终止' : undefined),
       )
       /* 非零退出码必须是失败：沙箱自己工作正常，不等于命令成功 */
       if ((sandboxed.exitCode ?? 0) !== 0) {

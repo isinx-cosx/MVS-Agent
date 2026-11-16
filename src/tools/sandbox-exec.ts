@@ -44,6 +44,11 @@ export interface SandboxRunOutput {
   /** 拿不到 worker 结果时只有这个字段有意义 */
   error?: string
   exitCode?: number
+  /** 执行器报的网络状态：blocked = AppContainer 断网 */
+  network?: 'blocked' | 'allowed'
+  /** 沙箱工作的证据（job 是否挂上、授权是否成功），用于诊断 */
+  job?: string
+  granted?: string
   timedOut?: boolean
   writeBytes?: number
   stdout?: string
