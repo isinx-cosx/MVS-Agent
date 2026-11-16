@@ -39,7 +39,7 @@ import {
 } from '../context/types.ts'
 import { collect } from '../model/collect.ts'
 import { computeCost } from '../model/cost.ts'
-import { describeHits, describePii, isSensitivePath, looksLikeSensitivePathLine, newChunkWindow, redactChunkedSecrets, redactEncoded, redactPii, scanText, type ChunkWindow } from '../guard/scan.ts'
+import { describeHits, describePii, isSensitivePath, looksLikeSensitivePathLine, newChunkWindow, redactChunkedSecrets, redactEncodedDeep, redactFragments, redactPii, scanText, type ChunkWindow } from '../guard/scan.ts'
 import { shouldScanOutput, wantsPlainOutput, writtenPaths, type TaintStore } from '../guard/review.ts'
 import { isScriptPath, loopWarningNote } from '../tools/loop-lint.ts'
 import type { Message, ToolCall, Usage } from '../model/types.ts'
@@ -1446,6 +1446,29 @@ export class Session {
       return { ...result, content: `〔按你的要求原样显示（未打码）〕\n\n${result.content}` }
     }
 
+    /*
+     * 二进制文件**只给元信息**。
+     *
+     * 理由：把密钥藏进 PNG、再用 read_file 读回来，是一条完整通路 ——
+     * 内容审核只处理可打印文本，二进制直接穿过去。而 agent 读文件时
+     * 没有任何正当需求要拿到一整张图的字节。
+     */
+    if (tool === 'read_file') {
+      const body = content
+      const sample = body.slice(0, 8192)
+      const nonPrintable = [...sample].filter((ch) => ch !== '\n' && ch !== '\r' && ch !== '\t' && ch < ' ').length
+      const looksBinary = body.includes(String.fromCharCode(0)) || (sample.length > 0 && nonPrintable / sample.length > 0.1)
+      if (looksBinary) {
+        const size = Buffer.byteLength(body, 'utf8')
+        return {
+          ...result,
+          content: `〔二进制内容未返回〕${relPath ?? '（未知路径）'}：${size} 字节，${body.split('\n').length} 行。` +
+            '要判断内容请用命令行工具处理（它们不把字节交给模型）。',
+          data: { ...(typeof result.data === 'object' && result.data !== null ? result.data : {}), binary: true, bytes: size },
+        }
+      }
+    }
+
     const scanned = scanText(content, {
       ...(wholeFile ? { wholeFile: true } : {}),
       ...(relPath === undefined ? {} : { pathHint: relPath }),
@@ -1455,7 +1478,7 @@ export class Session {
      * 解一层编码再扫：`base64 key.bin` 拿出来的是不可读 blob，正则认不出内容。
      * 解开之后如果里面有密钥/私密内容，整个 blob 换掉（原文不留）。
      */
-    const decoded = redactEncoded(scanned.text)
+    const decoded = redactEncodedDeep(scanned.text)
 
     /* 私密内容（手机号 / 身份证 / 银行卡 / 邮箱）：打码保留形状，和密钥分开处置 */
     const pii = redactPii(decoded.text)
@@ -1470,9 +1493,12 @@ export class Session {
     const windowKey = relPath === undefined ? tool : `${tool}:${relPath}`
     const carried = this.#chunkWindows.get(windowKey) ?? newChunkWindow()
     const chunked = redactChunkedSecrets(pii.text, carried)
+
+    /* 长度余数判据：完整 base64 必然是 4 的倍数，不是的多半是被切开的片段 */
+    const fragments = redactFragments(chunked.text)
     this.#chunkWindows.set(windowKey, chunked.window)
 
-    if (scanned.hits.length === 0 && pii.hits.length === 0 && decoded.blobs === 0 && chunked.hits === 0) {
+    if (scanned.hits.length === 0 && pii.hits.length === 0 && decoded.blobs === 0 && chunked.hits === 0 && fragments.hits === 0) {
       /* grep 的路径扣留可能一条内容规则都没命中 —— 那种情况也要把扣留后的正文交出去 */
       return content === result.content ? result : { ...result, content }
     }
@@ -1494,7 +1520,7 @@ export class Session {
 
     return {
       ...result,
-      content: `${note}\n\n${chunked.text}`,
+      content: `${note}\n\n${fragments.text}`,
       data: {
         ...(typeof result.data === 'object' && result.data !== null ? result.data : {}),
         redacted: scanned.hits.length,

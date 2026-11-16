@@ -24,7 +24,7 @@ function judge(mode: 'workspace-write' | 'full-access', command: string) {
   )
 }
 
-import { describePii, looksLikeSensitivePathLine, newChunkWindow, redactChunkedSecrets, redactEncoded, redactPii } from '../src/guard/scan.ts'
+import { describePii, looksLikeSensitivePathLine, newChunkWindow, redactChunkedSecrets, redactEncoded, redactEncodedDeep, redactFragments, redactPii } from '../src/guard/scan.ts'
 
 test('通用审核：默认都审，只有自写内容的工具免审', () => {
   for (const tool of ['read_file', 'grep', 'glob', 'run_command', 'job_output', 'web_fetch', 'web_search', 'use_skill', 'list_jobs', 'spawn_agent', 'kill_job']) {
@@ -172,4 +172,48 @@ test('分段：命中之后窗口清空（避免继续误伤后续内容）', ()
     window = step.window
   }
   assert.deepEqual(window.pieces, [])
+})
+
+/* ── 深层编码、二进制、片段：三条新判据 ─────────────────────────────── */
+
+test('深层编码：base64(base64(密钥)) 也能扣住', () => {
+  const secret = "api_key = 'sk-realsecret1234567890abcd'"
+  const once = Buffer.from(secret, 'utf8').toString('base64')
+  const twice = Buffer.from(once, 'utf8').toString('base64')
+  const result = redactEncodedDeep(twice)
+  assert.ok(result.hits > 0, '两层应当命中')
+  assert.ok(result.depth >= 1)
+  assert.equal(result.text.includes(twice), false)
+})
+
+test('深层编码：三层也挡，但明确写清四层不做', () => {
+  const secret = "token: 'ghp_abcdefghijklmnopqrstuvwx'"
+  let value = Buffer.from(secret, 'utf8').toString('base64')
+  for (let level = 0; level < 2; level += 1) value = Buffer.from(value, 'utf8').toString('base64')
+  const result = redactEncodedDeep(value, 3)
+  assert.ok(result.hits > 0, '三层之内应当命中')
+})
+
+test('二进制：base64 的 PNG 被整段扣留（agent 不需要图片字节）', () => {
+  /* 一个最小 PNG 头 + 一些字节，base64 后当作命令输出 */
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)])
+  const encoded = png.toString('base64')
+  const result = redactEncodedDeep(encoded)
+  assert.ok(result.hits > 0)
+  assert.match(result.text, /PNG/)
+  assert.match(result.text, /已扣留/)
+  assert.equal(result.text.includes(encoded), false)
+})
+
+test('片段：长度不是 4 倍数的 base64 片段被标注', () => {
+  /* 19 字符：完整 base64 一定是 4 的倍数，19 不是 */
+  const result = redactFragments('输出 abcdefghijklmnopqrs 结束')
+  assert.equal(result.hits, 1)
+  assert.match(result.text, /可能是被切开的编码片段/)
+})
+
+test('片段：4 的倍数的完整值不动（避免误伤正常 id）', () => {
+  const result = redactFragments('id abcdefghijklmnop 结束')
+  assert.equal(result.hits, 0)
+  assert.match(result.text, /abcdefghijklmnop/)
 })

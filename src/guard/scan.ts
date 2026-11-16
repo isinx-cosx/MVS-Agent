@@ -472,3 +472,111 @@ export function redactChunkedSecrets(
 
   return { text, hits, window: { pieces } }
 }
+
+/* ── 深层编码、二进制、片段（三个漏法）──────────────────────────────── */
+
+/** 认出来的二进制类型。认不出就返回 undefined（乱码不当二进制处理） */
+export function magicOf(bytes: Uint8Array): string | undefined {
+  const at = (offset: number, values: number[]): boolean =>
+    values.every((value, index) => bytes[offset + index] === value)
+  if (at(0, [0x89, 0x50, 0x4e, 0x47])) return 'PNG'
+  if (at(0, [0xff, 0xd8, 0xff])) return 'JPEG'
+  if (at(0, [0x25, 0x50, 0x44, 0x46])) return 'PDF'
+  if (at(0, [0x50, 0x4b, 0x03, 0x04])) return 'ZIP'
+  if (at(0, [0x1f, 0x8b])) return 'GZIP'
+  if (at(0, [0x42, 0x4d])) return 'BMP'
+  return undefined
+}
+
+/** 这段文本本身像不像 base64 / hex（用来判断要不要再解一层） */
+function looksEncoded(text: string): 'base64' | 'hex' | undefined {
+  const compact = text.replace(/\s+/g, '')
+  if (compact.length < 24) return undefined
+  if (/^[0-9a-fA-F]+$/.test(compact) && compact.length % 2 === 0) return 'hex'
+  if (/^[A-Za-z0-9+/]+={0,2}$/.test(compact) && compact.length % 4 === 0) return 'base64'
+  return undefined
+}
+
+export interface DeepScan {
+  text: string
+  hits: number
+  blobs: number
+  /** 到过的最深层数（0 = 没解开过） */
+  depth: number
+}
+
+/**
+ * 解**多层**编码，最多 `maxDepth` 层。
+ *
+ * 为什么限 3 层：每多一层，输出可读性就掉一档。三层之后即使真藏了东西，
+ * 那段文本对人也是噪声 —— 而"人看不懂的输出"本身就是个信号。
+ */
+export function redactEncodedDeep(text: string, maxDepth = 3): DeepScan {
+  let current = text
+  let hits = 0
+  let blobs = 0
+  let depth = 0
+
+  for (let level = 1; level <= maxDepth; level += 1) {
+    let found = false
+    current = current.replace(/[A-Za-z0-9+/]{20,}={0,2}/g, (match) => {
+      if (match.length > MAX_BLOB_BYTES) return match
+      const bytes = Buffer.from(match, 'base64')
+      if (bytes.length < 12) return match
+
+      /* 二进制：认出类型就整段扣掉 —— agent 没有正当理由要一整张图的字节 */
+      const magic = magicOf(bytes)
+      if (magic !== undefined) {
+        hits += 1
+        blobs += 1
+        found = true
+        return `〔已扣留：${magic} 二进制内容（${bytes.length} 字节）〕`
+      }
+
+      const decoded = tryDecodeBase64(match)
+      if (decoded === undefined) return match
+
+      const scanned = scanText(decoded)
+      const pii = redactPii(decoded)
+      if (scanned.hits.length > 0 || pii.hits.length > 0) {
+        hits += scanned.hits.length + pii.hits.length
+        blobs += 1
+        found = true
+        return `〔已扣留：第 ${level} 层解出的敏感内容（${scanned.hits.length + pii.hits.length} 处）〕`
+      }
+
+      /* 解出来的东西本身还是编码 → 下一轮继续（嵌套编码走的这条） */
+      if (looksEncoded(decoded) !== undefined) {
+        current = decoded
+        found = true
+        return decoded
+      }
+      return match
+    })
+    if (!found) break
+    depth = level
+  }
+
+  return { text: current, hits, blobs, depth }
+}
+
+export interface FragmentScan {
+  text: string
+  hits: number
+}
+
+/**
+ * 长度余数判据：**完整 base64 的长度必然是 4 的倍数**。
+ *
+ * 被切开的段往往不是 —— 所以"16–39 字符、不是 4 的倍数、字符集像 base64"这种 token
+ * 高度可疑。误伤面是短 id / 哈希片段，所以提示写成"可能是片段"，不写"已扣留密钥"。
+ */
+export function redactFragments(text: string): FragmentScan {
+  let hits = 0
+  const updated = text.replace(/(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{16,39}={0,2}(?![A-Za-z0-9+/])/g, (match) => {
+    if (match.length % 4 === 0) return match
+    hits += 1
+    return '〔可能是被切开的编码片段〕'
+  })
+  return { text: updated, hits }
+}
