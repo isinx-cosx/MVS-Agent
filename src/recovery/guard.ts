@@ -1,3 +1,5 @@
+import path from 'node:path'
+import { listStreams } from './ads.ts'
 /**
  * 恢复守卫：包在**工具分发之外**。
  *
@@ -235,6 +237,44 @@ options: { restoreDeletedByCommands?: boolean; taint?: TaintStore } = {},
           `\n\n〔事后审计〕这条命令删了 ${removed.length} 个文件：${preview}${more}。` +
           '如果不是有意的，可以用这次事务的撤销按钮还原（或者把 MVS_RESTORE_DELETED=1 打开让这类删除自动补回）。'
         return { result: { ...result, content: `${result.content}${note}` }, transactionId: transaction.id }
+      }
+    }
+
+    /*
+     * ADS 汇报：命令可能往文件里写了**替代数据流**（`a.txt:secret`）。
+     *
+     * 快照与 diff 只看主数据流，所以这是"命令改了什么"里完全不可见的一块。
+     * 拦不住（文件系统看来是同一个文件的不同流），但必须让人看见。
+     */
+    const ads: Array<{ path: string; streams: string[] }> = []
+    let adsUnavailable: string | undefined
+    for (const rel of [...transaction.changes.added, ...transaction.changes.modified].slice(0, 50)) {
+      const listing = await listStreams(path.join(this.#manager.root, rel))
+      if (!listing.available) {
+        if (listing.reason !== undefined) adsUnavailable = listing.reason
+        continue
+      }
+      if (listing.streams.length > 0) ads.push({ path: rel, streams: listing.streams })
+    }
+    if (ads.length > 0) {
+      const note =
+        `\\n\\n〔ADS〕这条命令给 ${ads.length} 个文件写了**替代数据流**：` +
+        ads.map((item) => `${item.path}（${item.streams.join(
+', '
+)}）`).join(
+'、'
+) +
+        
+'。常规工具看不到它们，恢复层也不快照它们 —— 要清掉请显式删除。'
+      return {
+        result: {
+          ...result,
+          content: `${result.content}${note}` ,
+          data: { ...(typeof result.data === 
+'object'
+ && result.data !== null ? result.data : {}), ads },
+        },
+        transactionId: transaction.id,
       }
     }
 

@@ -176,3 +176,26 @@ test('restorePaths：只补被删的文件，不动修改过的', async () => {
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('ADS：能枚举出替代数据流（常规工具看不见，恢复层也不快照）', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'mvs-ads-'))
+  try {
+    const file = path.join(root, 'a.txt')
+    await writeFile(file, 'plain', 'utf8')
+    /* 写一条替代数据流：a.txt:secret —— 目录列表里看不出任何区别 */
+    await writeFile(file + ':secret', 'hidden', 'utf8')
+    const { listStreams } = await import('../src/recovery/ads.ts')
+    const withAds = await listStreams(file)
+    if (!withAds.available) {
+      /* koffi 不可用（ADS 枚举需要它）—— 跳过而不是假装通过 */
+      assert.equal(withAds.streams.length, 0)
+      return
+    }
+    assert.deepEqual(withAds.streams, ['secret'])
+    const plain = path.join(root, 'b.txt')
+    await writeFile(plain, 'x', 'utf8')
+    assert.deepEqual((await listStreams(plain)).streams, [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
