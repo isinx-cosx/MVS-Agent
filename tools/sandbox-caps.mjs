@@ -1,36 +1,38 @@
 /**
- * 沙箱能力探针：**把"推测"变成"实测"**。
- *
- * 之前的挡不住清单里，这几条一直标着"未测"：
- *
- *   · 注册表 `HKCU\…\Run`（持久化）
- *   · 命名管道 `\\.\pipe\…`
- *   · NTFS 替代数据流（`file.txt:secret`）
- *   · 剪贴板
- *
- * 这个脚本在**默认沙箱**（AppContainer 断网 + Job 上限）里逐条试，
- * 每条都输出 `allowed` 或 `denied`，不猜。
+ * 沙箱能力探针：把"推测"变成"实测"。
  *
  *     node tools/sandbox-caps.mjs
  *
- * 管道那一条需要一个服务端，所以由本进程先起一个命名管道服务器，
- * 再让沙箱里的子进程去连 —— 这样"连不上"才有意义（而不是因为没服务端）。
+ * 覆盖四条之前标着"未测"的通道：注册表 `HKCU\…\Run`、命名管道、NTFS 替代数据流、剪贴板。
+ *
+ * ## 两次失败换来的写法（别再走一遍）
+ *
+ * 1. **值不要拼进代码字符串，用 argv 传。**
+ *    拼字符串时路径里的反斜杠与引号要过三层转义（spawn → cmd → node -e），
+ *    错一次就变成语法错误，而错的样子和"被挡住"一模一样。
+ *    现在代码里只写 `process.argv.slice(1)`，路径从 argv 来。
+ * 2. **先确认探针自己跑通了，再看结论。**
+ *    `node -e` 语法错误时 stderr 会把**源码**回显出来 —— 而源码里就写着
+ *    `'CONNECTED'` / `'WROTE'`，用正则判"成功"会被自己的代码骗过去（上次就是这样）。
+ *    所以判定前先看 `[eval]` 标记：有它就是探针坏了，一律 `probe-broken`。
+ * 3. `node <脚本文件>` 在容器里起不来（启动要 `realpath C:\`，被拒），所以只用 `-e`。
  */
 
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 const RUNNER = path.join(process.cwd(), 'tools', 'sandbox-net-run.mjs')
+const dir = mkdtempSync(path.join(tmpdir(), 'mvs-caps-'))
 
-/** 在沙箱里跑一段 node 脚本，返回 { ok, exitCode, output, denied } */
-function sandboxed(code, cwd) {
+/** 在沙箱里跑 `node -e <code> <args…>` */
+function sandboxed(code, args = [], timeoutMs = 30_000) {
   return new Promise((resolve) => {
     const child = spawn(
       process.execPath,
-      [RUNNER, '--cwd', cwd, '--timeout-ms', '30000', '--', process.execPath, '-e', code],
+      [RUNNER, '--cwd', dir, '--timeout-ms', String(timeoutMs), '--', process.execPath, '-e', code, ...args],
       { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
     )
     let out = ''
@@ -41,124 +43,105 @@ function sandboxed(code, cwd) {
       out += chunk.toString('utf8')
     })
     child.on('close', () => {
-      const line = out.split('\n').filter((item) => item.trim().startsWith('{')).at(-1)
+      const line = out
+        .split('\n')
+        .filter((item) => item.trim().startsWith('{'))
+        .at(-1)
       let parsed = {}
       try {
         parsed = line === undefined ? {} : JSON.parse(line)
       } catch {
         parsed = {}
       }
-      const text = `${parsed.stdout ?? ''}${parsed.stderr ?? ''}`
       resolve({
-        ok: parsed.ok === true,
         exitCode: parsed.exitCode,
         network: parsed.network,
         job: parsed.job,
-        text: text.slice(0, 240),
-        denied: /denied|EPERM|EACCES|ERROR_ACCESS/i.test(text),
+        text: `${parsed.stdout ?? ''}${parsed.stderr ?? ''}`.trim().slice(0, 300),
       })
     })
   })
 }
 
-/** 跑一个脚本文件（比 -e 稳：没有第二层引号/转义） */
-function sandboxedFile(scriptPath, cwd) {
-  return new Promise((resolve) => {
-    const child = spawn(
-      process.execPath,
-      [RUNNER, '--cwd', cwd, '--timeout-ms', '30000', '--', process.execPath, scriptPath],
-      { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
-    )
-    let out = ''
-    child.stdout?.on('data', (chunk) => { out += chunk.toString('utf8') })
-    child.stderr?.on('data', (chunk) => { out += chunk.toString('utf8') })
-    child.on('close', () => {
-      const line = out.split('\n').filter((item) => item.trim().startsWith('{')).at(-1)
-      let parsed = {}
-      try { parsed = line === undefined ? {} : JSON.parse(line) } catch { parsed = {} }
-      const text = `${parsed.stdout ?? ''}${parsed.stderr ?? ''}`
-      resolve({
-        ok: parsed.ok === true,
-        exitCode: parsed.exitCode,
-        network: parsed.network,
-        job: parsed.job,
-        text: text.slice(0, 240),
-        denied: /denied|EPERM|EACCES|ERROR_ACCESS|CONNECTED/i.test(text) ? /denied|EPERM|EACCES|ERROR_ACCESS/i.test(text) : false,
-      })
-    })
-  })
+/** 判定：先排除"探针自己坏了"，再下结论 */
+function verdictOf(text) {
+  if (text.includes('[eval]') || text.includes('SyntaxError')) return 'probe-broken'
+  if (/DENIED|EPERM|EACCES|access is denied/i.test(text)) return 'denied'
+  if (/\bWROTE\b|\bCONNECTED\b|\bREAD \d+/.test(text)) return 'allowed'
+  return 'inconclusive'
 }
 
-const dir = mkdtempSync(path.join(tmpdir(), 'mvs-caps-'))
 const results = []
+const push = (name, outcome) => results.push({ name, verdict: verdictOf(outcome.text), ...outcome })
 
 /* ① 注册表：HKCU 的 Run 键（持久化最经典的一条路） */
-results.push({
-  case: 'registry HKCU\\…\\Run',
-  ...(await sandboxed(
-    "const { execSync } = require('child_process');" +
-      "try { execSync('reg add HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run /v MVSCaps /d calc /f', { stdio: 'pipe' }); console.log('WROTE') }" +
-      "catch (e) { console.log('DENIED ' + (e.stderr ? 'reg-denied' : e.code)) }",
-    dir,
-  )),
-})
+push(
+  'registry HKCU Run',
+  await sandboxed(
+    [
+      "const { execFileSync } = require('child_process')",
+      'const [exe, key] = process.argv.slice(1)',
+      "try { execFileSync(exe, ['add', key, '/v', 'MVSCaps', '/d', 'calc', '/f'], { stdio: 'pipe' }); console.log('WROTE') }",
+      "catch (e) { console.log('DENIED ' + (e.status ?? e.code ?? 'error')) }",
+    ].join(String.fromCharCode(10)),
+    [String.raw`C:\Windows\System32\reg.exe`, String.raw`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`],
+  ),
+)
 
-/* ② 替代数据流：工作区里（已被授权）能不能写 ADS */
-results.push({
-  case: 'NTFS ADS file.txt:secret',
-  ...(await sandboxed(
-    "const fs = require('fs');" +
-      "try { fs.writeFileSync('a.txt:secret', 'x'); console.log('WROTE ' + fs.readFileSync('a.txt:secret', 'utf8')) }" +
-      "catch (e) { console.log('DENIED ' + e.code) }",
-    dir,
-  )),
-})
-
-/* ③ 命名管道：本进程起服务端，沙箱子进程去连（脚本写成文件，避免 -e 的反斜杠转义） */
-const pipeName = `\\\\.\\pipe\\mvs-caps-${process.pid}`
+/* ② 命名管道：本进程起服务端，沙箱子进程去连（管道名走 argv） */
+const PIPE_PREFIX = String.fromCharCode(92, 92, 46, 92, 112, 105, 112, 101, 92)
+const pipeName = `${PIPE_PREFIX}mvs-caps-${process.pid}`
 const server = net.createServer((socket) => socket.end())
 await new Promise((resolve) => server.listen(pipeName, resolve))
-const pipeScript = path.join(dir, 'pipe.mjs')
-writeFileSync(
-  pipeScript,
-  [
-    "import net from 'node:net'",
-    `const s = net.connect(${JSON.stringify(pipeName)})`,
-    "s.on('connect', () => { console.log('CONNECTED'); s.end() })",
-    "s.on('error', (e) => console.log('DENIED ' + (e.code ?? e.message)))",
-    '',
-  ].join(String.fromCharCode(10)),
-  'utf8',
+push(
+  'named pipe connect',
+  await sandboxed(
+    [
+      "const net = require('net')",
+      'const name = process.argv[1]',
+      'const s = net.connect(name)',
+      "s.on('connect', () => { console.log('CONNECTED'); s.end() })",
+      "s.on('error', (e) => console.log('DENIED ' + (e.code ?? e.message)))",
+    ].join(String.fromCharCode(10)),
+    [pipeName],
+  ),
 )
-results.push({
-  case: 'named pipe connect',
-  ...(await sandboxedFile(pipeScript, dir)),
-})
 server.close()
 
-/* ④ 剪贴板：能读就说明进程能看到用户复制过的任何东西 */
-results.push({
-  case: 'clipboard read',
-  ...(await sandboxed(
-    "const { execSync } = require('child_process');" +
-      "try { const v = execSync('powershell -NoProfile -Command Get-Clipboard', { stdio: 'pipe' }).toString();" +
-      " console.log('READ ' + v.length) }" +
-      "catch (e) { console.log('DENIED ' + (e.code ?? 'error')) }",
-    dir,
-  )),
-})
+/* ③ 替代数据流：工作区（已授权）里能不能写 */
+push(
+  'NTFS ADS write',
+  await sandboxed(
+    [
+      "const fs = require('fs')",
+      'const name = process.argv[1]',
+      "try { fs.writeFileSync(name, 'x'); console.log('WROTE') }",
+      "catch (e) { console.log('DENIED ' + e.code) }",
+    ].join(String.fromCharCode(10)),
+    ['ads.txt:secret'],
+  ),
+)
+
+/* ④ 剪贴板：能读就说明进程能看到用户复制过的一切 */
+push(
+  'clipboard read',
+  await sandboxed(
+    [
+      "const { execFileSync } = require('child_process')",
+      'const ps = process.argv[1]',
+      "try { const v = execFileSync(ps, ['-NoProfile', '-NonInteractive', '-Command', 'Get-Clipboard'], { stdio: 'pipe' }); console.log('READ ' + String(v.length)) }",
+      "catch (e) { console.log('DENIED ' + (e.status ?? e.code ?? 'error')) }",
+    ].join(String.fromCharCode(10)),
+    [String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`],
+    40_000,
+  ),
+)
 
 rmSync(dir, { recursive: true, force: true })
 
 for (const item of results) {
   process.stdout.write(
-    `${item.case.padEnd(28)} ${item.denied ? 'denied' : 'allowed'}  ` +
-      `(exit=${String(item.exitCode)}, job=${String(item.job)}, net=${String(item.network)})\n`,
+    `${item.name.padEnd(22)} ${item.verdict.padEnd(13)} job=${String(item.job)} net=${String(item.network)}\n`,
   )
-}
-void existsSync
-
-process.stdout.write(String.fromCharCode(10) + '--- 原文 ---' + String.fromCharCode(10))
-for (const item of results) {
-  process.stdout.write(item.case + ': exit=' + String(item.exitCode) + ' text=' + JSON.stringify(item.text) + String.fromCharCode(10))
+  process.stdout.write(`  ${JSON.stringify(item.text.slice(0, 170))}\n`)
 }
