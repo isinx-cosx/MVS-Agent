@@ -30,6 +30,19 @@ const home = mkdtempSync(path.join(os.tmpdir(), 'mvs-test-home-'))
 process.env['MVS_HOME'] = home
 
 /*
+ * 测试里**默认不走沙箱**。
+ *
+ * 生产默认是开的（`MVS_SANDBOX` 不设 = 走沙箱），但测试要验证的是产品逻辑本身：
+ * 恢复层、命令超时、取消、参数校验 —— 它们不该每条命令都付一次 AppContainer 启动，
+ * 也不该因为"写不进临时目录"而红。
+ *
+ * 需要沙箱的用例（`test/sandbox-*.test.ts`）用 `withSandbox()` 自己把它设成
+ * `low-il`，用完恢复。这里是**整个测试进程的默认值**，不是每个文件各自设 ——
+ * 同进程并发跑，各自设会互相覆盖（这个坑已经踩过一次）。
+ */
+process.env['MVS_SANDBOX'] = 'off'
+
+/*
  * 退出时清掉。用同步删除：`exit` 事件里没有机会等异步操作完成。
  * 删不掉也不算失败（临时目录本来就允许留下），所以吞掉异常。
  */

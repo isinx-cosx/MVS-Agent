@@ -117,8 +117,8 @@ interface RunCommandArgs {
  * 关掉要写清楚理由，因为它是唯一能挡住"读到密钥再发出去"的那一层。
  */
 function sandboxEnabled(): boolean {
-  /* 暂时回到「显式开启」：默认开会打破一批既有测试，需要先改测试才能翻默认值 */
-  return process.env['MVS_SANDBOX'] === 'low-il'
+  /* 默认开：不设 = 走沙箱；`MVS_SANDBOX=off` 才关（测试的默认值在 test/setup.mjs） */
+  return process.env['MVS_SANDBOX'] !== 'off'
 }
 
 export const runCommandTool: Tool<RunCommandArgs> = {
