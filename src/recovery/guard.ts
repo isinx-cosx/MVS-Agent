@@ -12,6 +12,7 @@
  * 因此 shell 副作用、代码生成、甚至并发的外部改动都被同一个边界覆盖。
  */
 
+import type { TaintStore } from '../guard/review.ts'
 import type { RecoveryManager } from './manager.ts'
 import type { ToolRegistry } from '../tools/registry.ts'
 import type { ToolContext, ToolResult } from '../tools/types.ts'
@@ -76,6 +77,13 @@ export class RecoveryGuard {
   #manager: RecoveryManager
 
   #restoreDeleted: boolean
+  /**
+   * taint 表：模型没看过内容的文件。
+   *
+   * `write_file` / `edit` 那条路在会话层就拦了；这里补的是 **shell 写** ——
+   * 一条命令可以覆盖被 taint 的 `.env`，那是"没看过还不许盲改"的直接反例。
+   */
+  #taint?: TaintStore
 
   /**
    * @param options.restoreDeletedByCommands 一条命令删了工作区里的文件时，
@@ -85,11 +93,12 @@ export class RecoveryGuard {
   constructor(
     registry: ToolRegistry,
     manager: RecoveryManager,
-    options: { restoreDeletedByCommands?: boolean } = {},
+options: { restoreDeletedByCommands?: boolean; taint?: TaintStore } = {},
   ) {
     this.#registry = registry
     this.#manager = manager
     this.#restoreDeleted = options.restoreDeletedByCommands === true
+    this.#taint = options.taint
   }
 
   get manager(): RecoveryManager {
@@ -158,6 +167,42 @@ export class RecoveryGuard {
 
     const transaction = await this.#manager.commit(pending)
     if (transaction === null) return { result }
+
+    /*
+     * taint 覆盖 shell 写：命令改过 / 删过的路径，如果模型没看过它的内容，**还原**。
+     *
+     * 为什么不事前拦：命令是用户批准过的，"批准跑"和"批准改这个文件"是两件事，
+     * 但事前无法知道它会改哪些文件。所以只能事后修 —— 文案必须写"已自动还原"，
+     * 不能写"已拒绝"（那是假话）。
+     */
+    if (this.#taint !== undefined) {
+      const touched = [...transaction.changes.modified, ...transaction.changes.removed]
+      const restored: string[] = []
+      for (const rel of touched) {
+        const record = await this.#taint.has(rel)
+        if (record === undefined) continue
+        const fixed = await this.#manager.restorePaths(transaction.id, [rel])
+        if (fixed.restored.length > 0) restored.push(rel)
+      }
+      if (restored.length > 0) {
+        const list = restored.join(', ')
+        return {
+          result: {
+            ok: false,
+            content:
+              `命令改了 ${restored.length} 个模型没看过内容的文件：${list}。` +
+              `已自动还原（这些文件被扣留过，盲改会丢掉你看不到的东西）。` +
+              `要改它们，先用 clear_taint 解除限制，或者自己改。`,
+            error: {
+              kind: 'tainted_write_via_command',
+              message: `已还原：${list}`,
+            },
+            data: { restoredTainted: restored },
+          },
+          transactionId: transaction.id,
+        }
+      }
+    }
 
     /*
      * 事后审计：**这条命令删了工作区里的文件，而它不是结构化删除工具。**

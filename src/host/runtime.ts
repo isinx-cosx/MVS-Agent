@@ -766,6 +766,8 @@ export class Runtime {
          * 自动补会在这些场景上误伤。要更硬的保护就把 MVS_RESTORE_DELETED 打开。
          */
         restoreDeletedByCommands: process.env.MVS_RESTORE_DELETED === '1',
+        /* shell 写也要受 taint 管：命令改过的路径会被自动还原 */
+        taint,
       }),
       skills,
       plugins,

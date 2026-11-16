@@ -221,6 +221,8 @@ export type ToolErrorKind =
    * 得先腾出空间。混进 ailed 会让模型对着一个"总是失败"的命令反复重试。
    */
   | 'insufficient_disk'
+  /** 命令改了模型没看过内容的文件，已被自动还原（见 recovery/guard.ts） */
+  | 'tainted_write_via_command'
   | 'failed'
 
 export interface ToolError {
