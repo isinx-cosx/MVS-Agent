@@ -238,6 +238,15 @@ export class Session {
    * 需要跨几次调用累积才能拼接。状态放会话，键是来源（工具 + 路径）。
    */
   #chunkWindows = new Map<string, ChunkWindow>()
+  /**
+   * 分片读取计数：同一个文件被反复用小切片读。
+   *
+   * 防的是"逐位重建"：一次读 1 行、读 20 次就把整个文件问出来了，而每一次单独看
+   * 都完全正常 —— 单次判据（密钥模式、敏感路径）一条都不会响。
+   *
+   * 累计覆盖过半就把它降级成"只给元信息"，和敏感路径同一个处置。
+   */
+  #readSlices = new Map<string, { calls: number; covered: number; total: number }>()
   #step = 0
   #interrupted: { callId: string; tool: string; argsJson: string } | null = null
   #pending: PendingApproval | null = null
@@ -1491,6 +1500,40 @@ export class Session {
         message: `${tool}：人工批准原样显示（已进日志）`,
       })
       return { ...result, content: `〔已批准原样显示（未打码）〕\n\n${result.content}` }
+    }
+
+    /*
+     * 分片读取检测（防逐位重建）。
+     *
+     * read_file 的 data 里有 totalLines / returnedLines，用它累计"这个文件被读了几次、
+     * 覆盖了多少行"。单独一次小切片完全正常 —— 只有**次数多 + 覆盖过半**才是重建特征。
+     *
+     * 命中后降级成"只给元信息"（和敏感路径同一套处置），因为此时内容已经等于被看过。
+     * 阈值 5 次 / 50% 是刻意的保守值：正常翻代码很少对同一个文件换 5 次窄切片。
+     */
+    if (tool === 'read_file' && relPath !== undefined && typeof result.data === 'object' && result.data !== null) {
+      const meta = result.data as { totalLines?: number; returnedLines?: number }
+      const total = typeof meta.totalLines === 'number' ? meta.totalLines : 0
+      const returned = typeof meta.returnedLines === 'number' ? meta.returnedLines : 0
+      if (total > 0 && returned > 0) {
+        const entry = this.#readSlices.get(relPath) ?? { calls: 0, covered: 0, total }
+        entry.calls += 1
+        entry.covered += Math.min(returned, total)
+        entry.total = total
+        this.#readSlices.set(relPath, entry)
+        if (entry.calls >= 5 && entry.covered / total > 0.5) {
+          /* 降级：后续读取只给字节数与行数，不再给内容 */
+          if (this.#deps.taint !== undefined) {
+            await this.#deps.taint.add(relPath, 'sensitive-path', '分片读取累计覆盖过半')
+          }
+          await this.#emit({
+            type: 'error',
+            message:
+              `分片读取告警：${relPath} 被读了 ${entry.calls} 次、累计覆盖 ${entry.covered}/${total} 行。` +
+              ' 已把它降级为「只给元信息」，防止逐位重建；要正常读用 clear_taint 解除。',
+          })
+        }
+      }
     }
 
     /*
