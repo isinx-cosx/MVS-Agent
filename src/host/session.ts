@@ -1447,7 +1447,42 @@ export class Session {
     }
 
     /*
+     * 敏感路径 / 已 taint 的文件：**只给元信息**。
+     *
+     * 为什么不给内容：给了之后模型可以用很多次小读取把内容逐位问出来
+     * （"第 3 行第 12 个字符是什么"）。连哈希也不能给 —— 哈希是**判定器**，
+     * 猜一个值算一次就能验证，对低熵内容（短密码、PIN）等于可破解。
+     *
+     * 所以只留「多大、几行」。出口是 `clear_taint`，或者人工自己看。
+     */
+    if (tool === 'read_file' && relPath !== undefined) {
+      const record = this.#deps.taint === undefined ? undefined : await this.#deps.taint.has(relPath)
+      if (record !== undefined || isSensitivePath(relPath)) {
+      /* 元信息也要 taint：模型没看过内容，就不许盲改（和整份扣留同一个理由） */
+      if (record === undefined && this.#deps.taint !== undefined) {
+        await this.#deps.taint.add(relPath, 'sensitive-path', '敏感路径：内容未返回')
+      }
+        const bytes = Buffer.byteLength(result.content, 'utf8')
+        const lineCount = result.content === '' ? 0 : result.content.split('\n').length
+        return {
+          ...result,
+          content:
+            `〔内容未返回〕${relPath}：${bytes} 字节，${lineCount} 行。` +
+            (record === undefined ? '' : `（此前被扣留过：${record.category}）`) +
+            ' 要判断内容请人工查看，或先 clear_taint 再读。',
+          data: {
+            ...(typeof result.data === 'object' && result.data !== null ? result.data : {}),
+            withheld: true,
+            bytes,
+            lines: lineCount,
+          },
+        }
+      }
+    }
+
+    /*
      * 二进制文件**只给元信息**。
+     *
      *
      * 理由：把密钥藏进 PNG、再用 read_file 读回来，是一条完整通路 ——
      * 内容审核只处理可打印文本，二进制直接穿过去。而 agent 读文件时

@@ -189,7 +189,8 @@ test('闸门：敏感路径整份扣留（.env 不靠内容匹配）', async () 
     async ({ session, taint, events }) => {
       await session.sendUserMessage('看 .env')
       const contents = settledContents(await events())
-      assert.match(contents[0]!, /整份输出已扣留/)
+      assert.match(contents[0]!, /内容未返回/)
+      assert.match(contents[0]!, /字节/)
       assert.equal(contents[0]!.includes('LOOKS_HARMLESS'), false)
       assert.ok((await taint.has('.env')) !== undefined)
     },

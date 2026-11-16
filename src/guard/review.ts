@@ -29,7 +29,7 @@ import type { PiiCategory, SecretCategory, SecretHit } from './scan.ts'
 export interface TaintRecord {
   /** 相对工作区根的路径 */
   path: string
-  category: SecretCategory | PiiCategory
+  category: SecretCategory | PiiCategory | 'sensitive-path'
   /** 那次命中的简要说明（不含具体值） */
   note: string
   at: string
@@ -90,7 +90,7 @@ export class TaintStore {
     return [...this.#records.values()].sort((a, b) => (a.path < b.path ? -1 : 1))
   }
 
-  async add(rel: string, category: SecretCategory, note: string): Promise<void> {
+  async add(rel: string, category: SecretCategory | PiiCategory | 'sensitive-path', note: string): Promise<void> {
     await this.#load()
     const key = normalize(rel)
     /* 同一路径只留第一条：后面的是"又遇到一次"，不改变结论 */
