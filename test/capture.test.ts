@@ -18,7 +18,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 /* 这个文件测的是**捕获**，与沙箱无关：别的用例可能把 MVS_SANDBOX 设上了（并发同进程） */
-delete process.env['MVS_SANDBOX']
+process.env['MVS_SANDBOX'] = 'off'
 
 import { runCommandTool } from '../src/tools/command-tool.ts'
 import type { ToolContext } from '../src/tools/types.ts'

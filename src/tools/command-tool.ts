@@ -109,6 +109,17 @@ interface RunCommandArgs {
   background?: boolean
 }
 
+/**
+ * 沙箱默认**开**。
+ *
+ * 之前是"设了 MVS_SANDBOX=low-il 才开"，那等于把安全交给用户记得设环境变量 ——
+ * 默认路径没有任何防护。现在反过来：除非显式 `MVS_SANDBOX=off`，命令都走沙箱。
+ * 关掉要写清楚理由，因为它是唯一能挡住"读到密钥再发出去"的那一层。
+ */
+function sandboxEnabled(): boolean {
+  return process.env['MVS_SANDBOX'] !== 'off'
+}
+
 export const runCommandTool: Tool<RunCommandArgs> = {
   name: 'run_command',
   description:
@@ -177,7 +188,7 @@ export const runCommandTool: Tool<RunCommandArgs> = {
      * ★ 后台作业**不走**沙箱：作业要活过这条命令，而 worker 的生命周期是这一条命令；
      * 把作业塞进 job 会随 worker 退出被 KILL_ON_JOB_CLOSE 一起收掉。
      */
-    if (process.env.MVS_SANDBOX === 'low-il' && args.background !== true) {
+    if (sandboxEnabled() && args.background !== true) {
       const sandboxed = await runInSandbox({
         command: args.command,
         args: args.args ?? (process.platform === 'win32' ? ['/c', args.command] : ['-c', args.command]),
