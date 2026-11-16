@@ -397,3 +397,78 @@ export function redactEncoded(text: string): EncodedScan {
   replaceBlob(HEX_BLOB, tryDecodeHex)
   return { text, hits, blobs }
 }
+
+/* ── 分段绕过：把最近几段拼起来再扫 ───────────────────────────────────── */
+
+/**
+ * 编码能挡一层，**切段**挡不住。
+ *
+ * `redactEncoded` 要求 blob ≥ 40 字符。把同一把密钥的 base64 切成 3 段、分 3 次输出，
+ * 每段都不够长，一条都不会命中 —— 而模型把 3 段拼起来就还原了。
+ *
+ * 所以这里记**最近几段**短 blob，把它们的不同组合拼起来尝试解码。
+ * 状态由调用方持有（会话级），因为一次工具输出里看不出来。
+ *
+ * 代价与边界：
+ *   · 只在**同一个来源**（同一个工具/路径）内累积，避免跨源乱拼
+ *   · 只拼最近 `window` 段（默认 8），再往前的不算 —— 不然状态会无限长
+ *   · 命中后清空该来源的窗口：拼出来的东西已经扣掉，没必要继续记
+ */
+export interface ChunkWindow {
+  pieces: string[]
+}
+
+const CHUNK_MIN = 16
+const CHUNK_MAX = 39
+const CHUNK_WINDOW = 8
+
+export function newChunkWindow(): ChunkWindow {
+  return { pieces: [] }
+}
+
+/**
+ * 扫一次输出里的**短** blob，并尝试与窗口里的旧片段拼起来。
+ *
+ * 返回更新后的窗口与新文本；命中时那几段会被替换成占位符。
+ */
+export function redactChunkedSecrets(
+  text: string,
+  window: ChunkWindow,
+): { text: string; hits: number; window: ChunkWindow } {
+  const shortBlobs: string[] = []
+  for (const match of text.matchAll(/[A-Za-z0-9+/]{16,}={0,2}/g)) {
+    const value = match[0]
+    if (value.length < CHUNK_MIN || value.length > CHUNK_MAX) continue
+    shortBlobs.push(value)
+  }
+  if (shortBlobs.length === 0) return { text, hits: 0, window }
+
+  /* 窗口 = 旧片段 + 本次片段（只保留最近 window 段） */
+  const pieces = [...window.pieces, ...shortBlobs].slice(-CHUNK_WINDOW)
+
+  /*
+   * 尝试所有**连续后缀组合**（2..window 段）。为什么不试所有排列：
+   * 分段通常是按顺序发生的，连续组合足够，而且组合数从 n! 降到 n²。
+   */
+  let hits = 0
+  let updated = text
+  for (let length = 2; length <= pieces.length; length += 1) {
+    const joined = pieces.slice(-length).join('')
+    const decoded = tryDecodeBase64(joined)
+    if (decoded === undefined) continue
+    const scanned = scanText(decoded)
+    const pii = redactPii(decoded)
+    const total = scanned.hits.length + pii.hits.length
+    if (total === 0) continue
+
+    hits += total
+    /* 把参与拼接的这几段从正文里扣掉 */
+    for (const piece of pieces.slice(-length)) {
+      updated = updated.split(piece).join('〔已扣留：分段拼接后解出的敏感内容〕')
+    }
+    /* 命中就清窗：拼出来的东西已经扣了，继续留着只会误伤后续内容 */
+    return { text: updated, hits, window: { pieces: [] } }
+  }
+
+  return { text, hits, window: { pieces } }
+}

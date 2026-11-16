@@ -39,7 +39,7 @@ import {
 } from '../context/types.ts'
 import { collect } from '../model/collect.ts'
 import { computeCost } from '../model/cost.ts'
-import { describeHits, describePii, isSensitivePath, looksLikeSensitivePathLine, redactEncoded, redactPii, scanText } from '../guard/scan.ts'
+import { describeHits, describePii, isSensitivePath, looksLikeSensitivePathLine, newChunkWindow, redactChunkedSecrets, redactEncoded, redactPii, scanText, type ChunkWindow } from '../guard/scan.ts'
 import { shouldScanOutput, wantsPlainOutput, writtenPaths, type TaintStore } from '../guard/review.ts'
 import { isScriptPath, loopWarningNote } from '../tools/loop-lint.ts'
 import type { Message, ToolCall, Usage } from '../model/types.ts'
@@ -231,6 +231,13 @@ export class Session {
   #turn = 0
   /** 本轮已新建的文件数（文件数预算用） */
   #createdThisTurn = 0
+  /**
+   * 分段绕过用的窗口：**按来源**记最近的短 blob。
+   *
+   * 为什么在会话里而不是扫描器里：一次工具输出里看不出"这是被切开的",
+   * 需要跨几次调用累积才能拼接。状态放会话，键是来源（工具 + 路径）。
+   */
+  #chunkWindows = new Map<string, ChunkWindow>()
   #step = 0
   #interrupted: { callId: string; tool: string; argsJson: string } | null = null
   #pending: PendingApproval | null = null
@@ -1453,7 +1460,19 @@ export class Session {
     /* 私密内容（手机号 / 身份证 / 银行卡 / 邮箱）：打码保留形状，和密钥分开处置 */
     const pii = redactPii(decoded.text)
 
-    if (scanned.hits.length === 0 && pii.hits.length === 0 && decoded.blobs === 0) {
+    /*
+     * 分段绕过：把**最近几段**短 blob 拼起来再解一次。
+     *
+     * 攻击形态很朴素：同一把密钥的 base64 切成 3 段、分 3 次输出，每段都不够 40 字符，
+     * 单看一条都不命中；模型拼起来就还原了。窗口按来源（工具 + 路径）分开记，
+     * 避免把两个无关文件的内容拼在一起误判。
+     */
+    const windowKey = relPath === undefined ? tool : `${tool}:${relPath}`
+    const carried = this.#chunkWindows.get(windowKey) ?? newChunkWindow()
+    const chunked = redactChunkedSecrets(pii.text, carried)
+    this.#chunkWindows.set(windowKey, chunked.window)
+
+    if (scanned.hits.length === 0 && pii.hits.length === 0 && decoded.blobs === 0 && chunked.hits === 0) {
       /* grep 的路径扣留可能一条内容规则都没命中 —— 那种情况也要把扣留后的正文交出去 */
       return content === result.content ? result : { ...result, content }
     }
@@ -1475,7 +1494,7 @@ export class Session {
 
     return {
       ...result,
-      content: `${note}\n\n${pii.text}`,
+      content: `${note}\n\n${chunked.text}`,
       data: {
         ...(typeof result.data === 'object' && result.data !== null ? result.data : {}),
         redacted: scanned.hits.length,

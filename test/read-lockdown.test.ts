@@ -24,7 +24,7 @@ function judge(mode: 'workspace-write' | 'full-access', command: string) {
   )
 }
 
-import { describePii, looksLikeSensitivePathLine, redactEncoded, redactPii } from '../src/guard/scan.ts'
+import { describePii, looksLikeSensitivePathLine, newChunkWindow, redactChunkedSecrets, redactEncoded, redactPii } from '../src/guard/scan.ts'
 
 test('通用审核：默认都审，只有自写内容的工具免审', () => {
   for (const tool of ['read_file', 'grep', 'glob', 'run_command', 'job_output', 'web_fetch', 'web_search', 'use_skill', 'list_jobs', 'spawn_agent', 'kill_job']) {
@@ -128,4 +128,48 @@ test('联网命令：MVS_ALLOW_NET=1 时放行（否则 npm install 这类命令
     if (previous === undefined) delete process.env['MVS_ALLOW_NET']
     else process.env['MVS_ALLOW_NET'] = previous
   }
+})
+
+/* ── 分段绕过：把最近几段拼起来再扫 ─────────────────────────────────── */
+
+test('分段：把 base64 切成 3 段分 3 次输出，第三段触发扣留', () => {
+  const secret = "api_key = 'sk-realsecret1234567890abcd'"
+  const blob = Buffer.from(secret, 'utf8').toString('base64')
+  /* 切成 3 段：每段都不够 40 字符，单看一条都不命中 */
+  const parts = [blob.slice(0, 20), blob.slice(20, 40), blob.slice(40)]
+  assert.ok(parts.every((part) => part.length < 40), '每段都应当短于单条阈值')
+
+  const window = newChunkWindow()
+  const first = redactChunkedSecrets(`A ${parts[0]}`, window)
+  assert.equal(first.hits, 0, '第一段自己不该命中')
+  const second = redactChunkedSecrets(`B ${parts[1]}`, first.window)
+  /* 两段拼起来（40 字符）通常已能解出前缀，这里不要求为 0 */
+  const third = redactChunkedSecrets(`C ${parts[2]}`, second.window)
+  const total = first.hits + second.hits + third.hits
+  assert.ok(total > 0, '三段之内应当命中')
+  /*
+   * 命中发生在第 2 或第 3 次都可能（取决于切点）。这里只断言"其中某一次扣留了"，
+   * 并把已知边界写下来：**第一段已经吐出之后收不回来** —— 这也是为什么窗口要早、
+   * 而不是等拼出完整 blob 才动手。
+   */
+  assert.match(second.text + third.text, /已扣留/)
+})
+
+test('分段：不相干的短片段拼起来不该误伤', () => {
+  const window = newChunkWindow()
+  let result = redactChunkedSecrets('x abcdefghijklmnop qrstuvwx', window)
+  result = redactChunkedSecrets('y 1234567890abcdef ZZZZ', result.window)
+  assert.equal(result.hits, 0)
+})
+
+test('分段：命中之后窗口清空（避免继续误伤后续内容）', () => {
+  const secret = "token: 'sk-abcdefghijklmnopqrstuvwx'"
+  const blob = Buffer.from(secret, 'utf8').toString('base64')
+  let window = newChunkWindow()
+  const pieces = [blob.slice(0, 20), blob.slice(20, 40), blob.slice(40)]
+  for (const piece of pieces) {
+    const step = redactChunkedSecrets(piece, window)
+    window = step.window
+  }
+  assert.deepEqual(window.pieces, [])
 })
