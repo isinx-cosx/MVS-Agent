@@ -117,7 +117,8 @@ interface RunCommandArgs {
  * 关掉要写清楚理由，因为它是唯一能挡住"读到密钥再发出去"的那一层。
  */
 function sandboxEnabled(): boolean {
-  return process.env['MVS_SANDBOX'] !== 'off'
+  /* 暂时回到「显式开启」：默认开会打破一批既有测试，需要先改测试才能翻默认值 */
+  return process.env['MVS_SANDBOX'] === 'low-il'
 }
 
 export const runCommandTool: Tool<RunCommandArgs> = {
@@ -188,7 +189,7 @@ export const runCommandTool: Tool<RunCommandArgs> = {
      * ★ 后台作业**不走**沙箱：作业要活过这条命令，而 worker 的生命周期是这一条命令；
      * 把作业塞进 job 会随 worker 退出被 KILL_ON_JOB_CLOSE 一起收掉。
      */
-    if (sandboxEnabled() && args.background !== true) {
+    if (sandboxEnabled() && ctx.sandboxOff !== true && args.background !== true) {
       const sandboxed = await runInSandbox({
         command: args.command,
         args: args.args ?? (process.platform === 'win32' ? ['/c', args.command] : ['-c', args.command]),

@@ -250,3 +250,24 @@ test('审核不挑文件名：普通路径里的私密内容同样被打码', as
     },
   )
 })
+
+test('revealSensitive：非交互模式直接拒绝（模型自己开不了这扇门）', async () => {
+  await withSession(
+    {
+      files: { '.env': 'SECRET=1' + String.fromCharCode(10) },
+      steps: [
+        { tool: { name: 'read_file', args: { path: '.env', revealSensitive: true } } },
+        { say: '好' },
+      ],
+    },
+    async ({ session, events }) => {
+      await session.sendUserMessage('原样读 .env')
+      const contents = settledContents(await events())
+      const text = contents.join('|')
+      assert.match(text, /已拒绝/)
+      /* 消息里用的是"不是交互模式"，不是"非交互模式" —— 断言跟着文案走 */
+      assert.match(text, /不是交互模式/)
+      assert.equal(text.includes('SECRET=1'), false, '内容不能泄漏')
+    },
+  )
+})

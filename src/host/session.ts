@@ -1363,7 +1363,7 @@ export class Session {
      */
     let reviewed = result
     if (result.ok && shouldScanOutput(call.name)) {
-      reviewed = await this.#reviewOutput(call.name, result, parsedArgs)
+      reviewed = await this.#reviewOutput(call, result, parsedArgs, signal)
     }
 
     /* 计数：这一轮新建了几个文件（文件数预算用） */
@@ -1411,10 +1411,12 @@ export class Session {
    * 不依赖内容匹配 —— 分段读取与编码能绕过内容匹配，绕不过路径分类。
    */
   async #reviewOutput(
-    tool: string,
+    call: ToolCall,
     result: ToolResult,
     args: unknown,
+    signal: AbortSignal,
   ): Promise<ToolResult> {
+    const tool = call.name
     const relPath =
       typeof args === 'object' && args !== null && typeof (args as Record<string, unknown>)['path'] === 'string'
         ? ((args as Record<string, unknown>)['path'] as string)
@@ -1442,8 +1444,46 @@ export class Session {
      * 走这条路的输出**会原样进日志**，所以必须在事件里留下"谁要求过"。
      */
     if (wantsPlainOutput(args)) {
-      await this.#emit({ type: 'policy_decision', callId: 'reveal', tool, decision: 'allow', reason: 'reveal-sensitive', message: `${tool}：按用户要求原样显示（未打码，已进日志）` })
-      return { ...result, content: `〔按你的要求原样显示（未打码）〕\n\n${result.content}` }
+      /*
+       * 要求"原样看一次"：**必须人工批准**。
+       *
+       * 之前它只是工具参数 —— 模型自己写 `revealSensitive: true` 就能拿到敏感文件全文，
+       * 等于审核上有一扇模型自己能开的门。现在：
+       *   · 交互模式：走审批链路，卡上写清路径与后果
+       *   · 非交互模式：直接拒绝，让用户自己看
+       */
+      if (this.#deps.interactive !== true) {
+        return {
+          ...result,
+          ok: false,
+          content:
+            `〔已拒绝〕当前不是交互模式，不能原样返回敏感内容（${relPath ?? tool}）。` +
+            '请人工查看该文件，或在交互会话里确认一次。',
+          error: { kind: 'failed', message: '非交互模式不允许 revealSensitive' },
+        }
+      }
+      const granted = await this.#requestApproval(
+        call,
+        `要求原样返回 ${relPath ?? tool} 的内容（未打码，会进日志）`,
+        signal,
+      )
+      if (!granted) {
+        return {
+          ...result,
+          ok: false,
+          content: `〔已取消〕${relPath ?? tool} 的内容没有返回（人工确认未通过）。`,
+          error: { kind: 'failed', message: '原样返回未获批准' },
+        }
+      }
+      await this.#emit({
+        type: 'policy_decision',
+        callId: call.id,
+        tool,
+        decision: 'allow',
+        reason: 'reveal-approved',
+        message: `${tool}：人工批准原样显示（已进日志）`,
+      })
+      return { ...result, content: `〔已批准原样显示（未打码）〕\n\n${result.content}` }
     }
 
     /*

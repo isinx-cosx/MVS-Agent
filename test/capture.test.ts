@@ -18,7 +18,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 /* 这个文件测的是**捕获**，与沙箱无关：别的用例可能把 MVS_SANDBOX 设上了（并发同进程） */
-process.env['MVS_SANDBOX'] = 'off'
+/* 不靠环境变量：它是进程级的，会和并发的其它用例互相污染 */
 
 import { runCommandTool } from '../src/tools/command-tool.ts'
 import type { ToolContext } from '../src/tools/types.ts'
@@ -28,7 +28,8 @@ async function tempRoot(): Promise<string> {
 }
 
 function ctxOf(root: string): ToolContext {
-  return { root } as ToolContext
+  /* 这些用例测的是捕获，不是沙箱：显式关掉，不靠进程级环境变量 */
+  return { root, sandboxOff: true } as ToolContext
 }
 
 /** 本地临时目录里还剩几个 `mvs-cmd-*`（测试前后比较，验证"跑完就删"） */
@@ -37,7 +38,7 @@ async function captureDirs(): Promise<string[]> {
   return items.filter((name) => name.startsWith('mvs-cmd-'))
 }
 
-test('输出炸弹：200 MB stdout 被截断，正文有上限，字节数如实给出', async () => {
+test('输出炸弹：80 MB stdout 被截断，正文有上限，字节数如实给出', async () => {
   const root = await tempRoot()
   const before = await captureDirs()
   try {

@@ -96,6 +96,13 @@ export interface ToolContext {
   root: string
   signal?: AbortSignal
   timeoutMs?: number
+  /**
+   * 这次调用**不走沙箱**。
+   *
+   * 存在的理由是测试：环境变量是**进程级**的，而测试在同进程里并发跑，
+   * 一个用例设 MVS_SANDBOX 会污染别的用例（实测：捕获测试被拖进沙箱，慢到超时）。
+   */
+  sandboxOff?: boolean
   maxOutputChars?: number
   /**
    * 后台作业注册表。
