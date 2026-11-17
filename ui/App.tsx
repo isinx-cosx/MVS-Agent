@@ -895,6 +895,17 @@ function Sidebar({
 
   return (
     <aside id="sidebar" ref={asideRef} style={{ width }} data-open={drawerOpen}>
+      {/*
+        侧栏顶部的品牌标 + 名字。
+
+        图标**永远配文字**：这个项目踩过"SVG 在一个像素都没画出来"的坑，
+        所以不让图形单独承载"这是什么"的信息。
+      */}
+      <div className="side-brand">
+        <MvsSymbol size={16} />
+        <span>MVS Agent</span>
+      </div>
+
       <section className="side-section">
         <h2>工作区</h2>
 

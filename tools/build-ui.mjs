@@ -31,7 +31,7 @@
  */
 
 import { build } from 'esbuild'
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -137,6 +137,9 @@ if (!html.includes(js) || !html.includes(css)) {
   throw new Error('index.html 里没能替换进带哈希的文件名 —— 模板里的引用是不是改了？')
 }
 writeFileSync(join(OUT, 'index.html'), html)
+
+/* 品牌图标：`index.html` 的 favicon 指向它。覆盖写即可，不需要删。 */
+copyFileSync(join(ROOT, 'ui', 'brand', 'mvs-symbol.svg'), join(OUT, 'mvs-symbol.svg'))
 
 /* ── 清掉上一批产物，免得目录里越堆越多 ──────────────────────────────── */
 const keep = new Set([js, css, `${js}.map`, `${css}.map`, 'index.html'])

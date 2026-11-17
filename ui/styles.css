@@ -2338,3 +2338,20 @@ button:disabled {
 .changes-toggle:hover .mvs-symbol {
   opacity: 1;
 }
+
+/* 侧栏顶部：品牌标 + 名字。图标弱一点，文字是主体 */
+.side-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--fg, #eee);
+  user-select: none;
+}
+
+.side-brand .mvs-symbol {
+  opacity: 0.9;
+}
