@@ -36,7 +36,7 @@ export const readFileTool: Tool<ReadFileArgs> = {
     properties: {
       path: { type: 'string', minLength: 1, description: '文件路径，相对于工作区根目录' },
       offset: { type: 'integer', minimum: 1, description: '起始行号，从 1 开始' },
-      /*        * 要求"原样看一次"。**必须人工批准**（非交互模式直接拒绝）。        * 存在这个字段是因为"每个阻塞态都要有出口"，但出口必须经过人。        */       revealSensitive: { type: 'boolean', description: '要求原样返回敏感内容（需要人工确认）' },
+      /*        * 要求"原样看一次"。**必须人工批准**（非交互模式直接拒绝）。        * 存在这个字段是因为"每个阻塞态都要有出口"，但出口必须经过人。        */       revealSensitive: { type: ['boolean', 'string'], description: '要求原样返回敏感内容：交互模式需要人工确认；非交互模式须传 npm run reveal:code 生成的一次性码' },
       limit: { type: 'integer', minimum: 1, description: '最多读取的行数' },
     },
     required: ['path'],

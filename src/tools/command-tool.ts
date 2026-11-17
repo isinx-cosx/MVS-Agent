@@ -200,7 +200,7 @@ export const runCommandTool: Tool<RunCommandArgs> = {
       )
     }
     if (sandboxEnabled() && ctx.sandboxOff !== true && args.background !== true) {
-      const sandboxed = await runInSandbox({
+      const common = {
         command: args.command,
         args: args.args ?? (process.platform === 'win32' ? ['/c', args.command] : ['-c', args.command]),
         cwd,
@@ -214,7 +214,26 @@ export const runCommandTool: Tool<RunCommandArgs> = {
         ...(process.env.MVS_SANDBOX_MAX_WRITE_MB === undefined
           ? {}
           : { maxWriteMb: Number(process.env.MVS_SANDBOX_MAX_WRITE_MB) }),
-      })
+      }
+      let sandboxed = await runInSandbox(common)
+      let degraded: string | undefined
+
+      /*
+       * S8：AppContainer 起不来时**降级**到受限令牌 + Job，而不是整条命令失败。
+       *
+       * 之前只有两个选项：默认的 AppContainer，或者 `MVS_SANDBOX=off`（一点不挡）。
+       * 中间那档才是常态需求 —— 没有 AppContainer 的机器仍然可以限制进程数、内存、
+       * CPU、写字节，只是少了断网与写隔离。少挡一点，好过一点不挡。
+       */
+      if (sandboxed.ok !== true && sandboxed.error !== undefined && sandboxed.exitCode === undefined) {
+        const fallback = await runInSandbox({ ...common, mode: 'job' })
+        if (fallback.ok === true || fallback.exitCode !== undefined) {
+          sandboxed = fallback
+          degraded = 'appcontainer-unavailable'
+        } else {
+          return failResult('failed', `沙箱没能启动：${sandboxed.error}`)
+        }
+      }
 
       if (sandboxed.ok !== true) {
         /*
@@ -250,12 +269,18 @@ export const runCommandTool: Tool<RunCommandArgs> = {
       const networkNote = networkFailure
         ? '这条命令需要联网，但沙箱默认断网。要放行：用 MVS_SANDBOX_NET=1 启动 daemon（装依赖那类场景），或者把需要联网的步骤交给 web_fetch。'
         : null
+      const degradedNote =
+        degraded === undefined
+          ? undefined
+          : ' 沙箱降级：这台机器起不了 AppContainer，仍在受限令牌 + Job 里跑 ——' +
+            ' 进程数/内存/CPU/写字节有上限，但断网与写隔离没有生效。'
+      const note = [networkNote, degradedNote].filter((item): item is string => typeof item === 'string').join(' ')
       const content = composeContent(
         sandboxed.exitCode ?? null,
         null,
         sandboxed.stdout ?? '',
         sandboxed.stderr ?? '',
-        networkNote ?? (sandboxed.timedOut === true ? '命令超时，整棵进程树已被终止' : undefined),
+        note === '' ? (sandboxed.timedOut === true ? '命令超时，整棵进程树已被终止' : undefined) : note,
       )
       /* 非零退出码必须是失败：沙箱自己工作正常，不等于命令成功 */
       if ((sandboxed.exitCode ?? 0) !== 0) {

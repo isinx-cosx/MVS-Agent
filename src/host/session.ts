@@ -42,6 +42,7 @@ import { computeCost } from '../model/cost.ts'
 import { describeHits, describePii, isSensitivePath, looksLikeSensitivePathLine, newChunkWindow, redactChunkedSecrets, redactEncodedDeep, redactFragments, redactPii, scanText, type ChunkWindow } from '../guard/scan.ts'
 import { shouldScanOutput, wantsPlainOutput, writtenPaths, type TaintStore } from '../guard/review.ts'
 import { ReviewStateStore } from '../guard/state.ts'
+import { consumeRevealCode } from '../guard/reveal-code.ts'
 import { isScriptPath, loopWarningNote } from '../tools/loop-lint.ts'
 import type { Message, ToolCall, Usage } from '../model/types.ts'
 import type { ToolRegistry } from '../tools/registry.ts'
@@ -1519,6 +1520,26 @@ export class Session {
        *   · 非交互模式：直接拒绝，让用户自己看
        */
       if (this.#deps.interactive !== true) {
+        /*
+         * 非交互模式：只接受**一次性确认码**。
+         *
+         * 码由用户在终端里 `npm run reveal:code` 生成，5 分钟过期、只能用一次、
+         * 磁盘上只留哈希 —— 等于把"人点一下"搬到了终端，而不是把审批自动化掉。
+         */
+        const supplied = typeof (args as Record<string, unknown>)['revealSensitive'] === 'string'
+          ? ((args as Record<string, unknown>)['revealSensitive'] as string)
+          : undefined
+        if (supplied !== undefined && (await consumeRevealCode(this.#deps.workspace, supplied))) {
+          await this.#emit({
+            type: 'policy_decision',
+            callId: call.id,
+            tool,
+            decision: 'allow',
+            reason: 'reveal-code-approved',
+            message: `${tool}：用一次性确认码原样显示（已进日志）`,
+          })
+          return { ...result, content: `〔确认码通过，原样显示（未打码）〕\n\n${result.content}` }
+        }
         return {
           ...result,
           ok: false,
