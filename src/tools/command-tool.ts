@@ -21,7 +21,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { resolveInsideRoot } from './paths.ts'
 import { killTreeOf as killTree } from './kill-tree.ts'
-import { runInSandbox } from './sandbox-exec.ts'
+import { runInSandbox, workerPath } from './sandbox-exec.ts'
 import {
   DEFAULT_MAX_OUTPUT_CHARS,
   DEFAULT_TIMEOUT_MS,
@@ -307,6 +307,53 @@ export const runCommandTool: Tool<RunCommandArgs> = {
           '这个环境没有后台作业注册表，无法后台运行。请改用前台执行（去掉 background）。',
         )
       }
+
+      /*
+       * 后台作业**也进沙箱**。
+       *
+       * 之前这里直接 spawn，理由是"作业要活过命令，而 worker 的生命周期就是这条命令"。
+       * 现在换成：作业就是那个 worker —— 它带 `--stream`（边跑边转发输出），
+       * 注册表把它当普通后台进程管；`job_kill` 杀掉 worker，worker 的 job 句柄关闭，
+       * `KILL_ON_JOB_CLOSE` 连带杀掉整棵树。
+       *
+       * 于是 `npm run dev` 这类长跑命令同样拿到断网与写隔离，而日志仍然是流式的。
+       */
+      const sandboxForJob = sandboxEnabled() && ctx.sandboxOff !== true
+      if (sandboxForJob) {
+        const worker = workerPath()
+        const job = await ctx.jobs.start({
+          command: args.command,
+          file: process.execPath,
+          argv: [
+            worker,
+            '--cwd',
+            cwd,
+            '--stream',
+            /* 后台作业的上限交给作业注册表与用户，worker 自己只兜一个很宽的底 */
+            '--timeout-ms',
+            String(24 * 60 * 60 * 1000),
+            '--',
+            file,
+            ...argv,
+          ],
+          cwd,
+          label: direct ? `${args.command} ${argv.join(' ')}`.trim() : args.command,
+        })
+        return okResult(
+          `${backgroundNote(job.id, job.pid, args.command, direct)}` +
+            '\n注意：后台作业现在**也在沙箱里**（断网、只写工作区）；日志是流式的。',
+          {
+            background: true,
+            jobId: job.id,
+            pid: job.pid,
+            command: args.command,
+            cwd,
+            sandboxed: true,
+            viaShell: !direct,
+          },
+        )
+      }
+
       const job = await ctx.jobs.start({
         command: args.command,
         file,

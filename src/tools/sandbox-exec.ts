@@ -69,7 +69,7 @@ export interface SandboxRunOutput {
  * `InitializeOncePerProcess`（exit 134，试过六种组合）。所以按"要不要断网"二选一：
  * 默认断网（安全优先），`MVS_SANDBOX_NET=1` 时用带 Job 上限的那个。
  */
-function workerPath(mode?: 'offline' | 'job'): string {
+export function workerPath(mode?: 'offline' | 'job'): string {
   const resolved = mode ?? (process.env['MVS_SANDBOX_NET'] === '1' ? 'job' : 'offline')
   const script = resolved === 'job' ? 'sandbox-run.mjs' : 'sandbox-net-run.mjs'
   const candidates = [

@@ -27,7 +27,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, rmSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -309,6 +309,42 @@ const report = {
   attribute: attributeApplied,
 }
 
+/*
+ * `--stream`：后台作业用。
+ *
+ * 作业要"活过这条命令"，所以 worker 不能像前台那样把输出攒完再吐一次 ——
+ * 那样 `npm run dev` 的日志永远看不到。这里改成**边跑边把子进程的输出转发出去**：
+ * 子进程仍然写那两个文件（句柄继承不变），worker 循环里把新增的字节泵到自己的
+ * stdout/stderr，作业注册表照常 pipe 它。
+ *
+ * 这样后台作业也能享受 AppContainer 的断网与写隔离，而且 `job_kill` 杀的是 worker，
+ * worker 的 job 句柄关闭 → `KILL_ON_JOB_CLOSE` 连带杀掉整棵树。
+ */
+const streamMode = argv.includes('--stream')
+let pumpOutOffset = 0
+let pumpErrOffset = 0
+function pump() {
+  if (!streamMode) return
+  for (const item of [
+    { file: outPath, offset: () => pumpOutOffset, set: (value) => (pumpOutOffset = value), sink: process.stdout },
+    { file: errPath, offset: () => pumpErrOffset, set: (value) => (pumpErrOffset = value), sink: process.stderr },
+  ]) {
+    try {
+      const size = statSync(item.file).size
+      const from = item.offset()
+      if (size <= from) continue
+      const fd = openSync(item.file, 'r')
+      const buffer = Buffer.alloc(Math.min(size - from, 1024 * 1024))
+      readSync(fd, buffer, 0, buffer.length, from)
+      closeSync(fd)
+      item.sink.write(buffer)
+      item.set(from + buffer.length)
+    } catch {
+      /* 文件还没建出来 / 已删除：下一次再试 */
+    }
+  }
+}
+
 if (created === 0) {
   report.error = GetLastError()
   process.stdout.write(`${JSON.stringify(report)}\n`)
@@ -377,6 +413,7 @@ const sampleWriteBytes = () => {
  */
 const pollMs = () => (Date.now() - startedAt < 2000 ? 10 : 50)
 while (WaitForSingleObject(hProcess, pollMs()) === WAIT_TIMEOUT) {
+  pump()
   writeBytes = sampleWriteBytes()
   if (writeBytes > maxWriteBytes) {
     /*
@@ -410,5 +447,13 @@ report.stderr = existsSync(errPath) ? readFileSync(errPath, 'utf8').slice(0, 200
 if (job !== null) CloseHandle(job)
 CloseHandle(outHandle)
 CloseHandle(errHandle)
+
+if (streamMode) {
+  /* 最后再泵一次把尾巴吐干净，然后按子进程的退出码结束 —— 不打印 JSON */
+  pump()
+  rmSync(dir, { recursive: true, force: true })
+  process.exit(exitCode[0] ?? 0)
+}
+
 process.stdout.write(`${JSON.stringify(report)}\n`)
 rmSync(dir, { recursive: true, force: true })
