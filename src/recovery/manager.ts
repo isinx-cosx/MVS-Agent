@@ -502,7 +502,29 @@ export class RecoveryManager {
     }
     await sweep(this.#store.blobsDir)
 
-    if (removedSnapshots.length > 0 || removedBlobs > 0) {
+    /*
+     * ADS 快照也要跟着事务走。
+     *
+     * `.mvs/ads/<事务 id>/` 里是流内容的副本。事务被裁掉之后它既恢复不了、
+     * 也没人再看 —— 留着只是把磁盘慢慢吃掉，而且里面**是文件内容**，
+     * 留一份"已经无法追溯来源的旧内容"不如删掉。
+     *
+     * 只删目录名能在事务列表里找不到的，命名不认识的目录一概不动。
+     */
+    let removedAds = 0
+    const adsRoot = path.join(this.#root, '.mvs', 'ads')
+    const keptTransactions = new Set(transactions.slice(-this.#maxTransactions).map((item) => item.id))
+    try {
+      for (const name of await readdir(adsRoot)) {
+        if (keptTransactions.has(name)) continue
+        await rm(path.join(adsRoot, name), { recursive: true, force: true })
+        removedAds += 1
+      }
+    } catch {
+      /* 没有 ads 目录是常态 */
+    }
+
+    if (removedSnapshots.length > 0 || removedBlobs > 0 || removedAds > 0) {
       await this.#store.appendJournal({
         type: 'prune',
         at: new Date().toISOString(),

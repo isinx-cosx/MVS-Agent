@@ -25,7 +25,7 @@
  * 过期在**加载时**清理（不写回，写出交给下一次记录）。
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 export interface SliceEntry {
@@ -49,6 +49,9 @@ interface StateFile {
 const SLICE_TTL_MS = 24 * 60 * 60 * 1000
 /** 分段窗口保留 1 小时（跨小时的片段拼接没有意义） */
 const WINDOW_TTL_MS = 60 * 60 * 1000
+/** 条目上限：防止长期会话把状态文件撑大（卫生，不是安全阈值） */
+const MAX_SLICES = 500
+const MAX_WINDOWS = 200
 
 export class ReviewStateStore {
   #file: string
@@ -118,15 +121,44 @@ export class ReviewStateStore {
   }
 
   async #persist(): Promise<void> {
+    /*
+     * 写之前先裁掉过期的、再按"最近更新时间"封顶。
+     *
+     * 不裁的话，一个长期运行的会话会让这个文件无限长：每个读过的路径都留一条，
+     * 最后读文件本身都要几十毫秒。上限不是安全阈值，只是**卫生**。
+     */
+    prune(this.#slices, SLICE_TTL_MS, MAX_SLICES)
+    prune(this.#windows, WINDOW_TTL_MS, MAX_WINDOWS)
+
     const payload: StateFile = {
       slices: Object.fromEntries(this.#slices),
       windows: Object.fromEntries(this.#windows),
     }
+    const target = this.#file
+    const temp = `${target}.tmp`
     try {
-      await mkdir(path.dirname(this.#file), { recursive: true })
-      await writeFile(this.#file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+      await mkdir(path.dirname(target), { recursive: true })
+      /*
+       * 先写临时文件再 rename：直接覆写的话，进程在写到一半时被杀会留下**半个 JSON**，
+       * 下次启动 parse 失败 —— 状态静默清零，而"清零"正好是检测想避免的。
+       */
+      await writeFile(temp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+      await rename(temp, target)
     } catch {
       /* 写不进去不该让工具调用失败：状态是"加固"，不是"功能" */
     }
   }
+}
+
+/** 删过期条目；仍超过上限时按 updatedAt 保留最近的 */
+function prune<T extends { updatedAt: string }>(map: Map<string, T>, ttlMs: number, max: number): void {
+  const now = Date.now()
+  for (const [key, entry] of map) {
+    if (now - Date.parse(entry.updatedAt) > ttlMs) map.delete(key)
+  }
+  if (map.size <= max) return
+  const ordered = [...map.entries()].sort(
+    (left, right) => Date.parse(right[1].updatedAt) - Date.parse(left[1].updatedAt),
+  )
+  for (const [key] of ordered.slice(max)) map.delete(key)
 }

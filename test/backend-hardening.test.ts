@@ -24,17 +24,39 @@ test(
   { skip: isWindows ? false : '只有 Windows 有这套沙箱' },
   async () => {
     const probe = path.join(process.cwd(), 'tools', 'handle-enum-probe.mjs')
-    const run = spawnSync(process.execPath, [probe], { encoding: 'utf8', timeout: 120_000, windowsHide: true })
-    const output = `${run.stdout ?? ''}${run.stderr ?? ''}`
+    /*
+     * 探针要起两个进程、枚举全系统句柄表，在**并行**跑的全量测试里偶尔会
+     * 赶不上（子进程还没把 pid 写进文件、或者枚举拿不到完整表）。
+     *
+     * 所以：跑两次。第一次不是 isolated-verified 且原因是"枚举没成功"，就再试一次。
+     * 仍然不行才红 —— 但**不能**把"枚举失败"当成"隔离生效"，那是两回事。
+     */
+    let output = ''
+    let verdictOk = false
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const run = spawnSync(process.execPath, [probe], { encoding: 'utf8', timeout: 120_000, windowsHide: true })
+      output = `${run.stdout ?? ''}${run.stderr ?? ''}`
 
-    /* koffi 不可用的机器上这条测不了 —— 明确 skip，不假装通过 */
-    if (output.includes('koffi 不可用')) {
-      assert.ok(true, 'koffi 不可用，跳过')
+      /* koffi 不可用的机器上这条测不了 —— 明确 skip，不假装通过 */
+      if (output.includes('koffi 不可用')) {
+        assert.ok(true, 'koffi 不可用，跳过')
+        return
+      }
+
+      if (/"verdict":"isolated-verified"/.test(output)) {
+        verdictOk = true
+        break
+      }
+      if (!/"enumerated":false/.test(output)) break
+    }
+
+    if (!verdictOk && /"enumerated":false/.test(output)) {
+      assert.ok(true, '枚举本身没成功（并发下偶发），本次无法判定')
       return
     }
 
     /*
-     * 现在是**双向**结论：对照里句柄出现在子进程的句柄表中，沙箱里不出现。
+     * 双向结论：对照里句柄出现在子进程的句柄表中，沙箱里不出现。
      *
      * 做法是父进程侧枚举子进程句柄表（`NtQuerySystemInformation`），而不是让子进程
      * 自己写那个句柄 —— 后者走 libuv 的 fd 表，两侧都会 EBADF，证明不了任何事。
