@@ -179,9 +179,23 @@ const withAppContainer = process.env['MVS_SANDBOX_NET'] !== '1'
  *   · 读出的内容进上下文之前过输出审核（打码 / 扣留 / taint）
  */
 const grants = []
+/* 专属 SID：从注册表映射里查（Windows 自己写的，不靠推导） */
+const OWN_SID = (() => {
+  try {
+    const out = spawnSync('reg', ['query', 'HKCU\\\\Software\\\\Classes\\\\Local Settings\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\AppContainer\\\\Mappings', '/s', '/v', 'Moniker'], { encoding: 'utf8', windowsHide: true, timeout: 20000 })
+    const blocks = String(out.stdout ?? '').split(/\\r?\\n\\r?\\n/)
+    for (const block of blocks) {
+      const sid = /Mappings\\\\(S-1-15-2-[\\\\d-]+)/.exec(block)?.[1]
+      const moniker = /Moniker\\s+REG_SZ\\s+(.+)/.exec(block)?.[1]?.trim().toLowerCase()
+      if (sid !== undefined && moniker === 'mvs.agent.sandbox') return sid
+    }
+  } catch {}
+  return 'S-1-15-2-1'
+})()
 if (withAppContainer) {
   const add = (target, rights) => {
-    const spec = rights === 'M' ? '*S-1-15-2-1:(M)' : '*S-1-15-2-1:(OI)(CI)' + rights
+    /* 优先授权给自己 profile 的 SID（只有我们的沙箱认）；查不到才退回 ALL APP PACKAGES */
+    const spec = rights === 'M' ? '*' + OWN_SID + ':(M)' : '*' + OWN_SID + ':(OI)(CI)' + rights
     const probe = spawnSync('icacls', [target, '/grant', spec], {
       windowsHide: true,
       timeout: 15000,

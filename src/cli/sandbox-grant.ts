@@ -22,7 +22,20 @@
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
 
-const APP_PACKAGES_SID = 'S-1-15-2-1'
+import { APP_CONTAINER_NAME, APP_CONTAINER_SID } from '../sandbox/appcontainer.ts'
+import { lookupProfileSid } from '../sandbox/profile-sid.ts'
+
+/*
+ * 授权对象优先用**自己 profile 的 SID**，拿不到才退回 `S-1-15-2-1`。
+ *
+ * `S-1-15-2-1` 是 ALL APPLICATION PACKAGES —— 任何 AppContainer（商店应用也算）
+ * 都能拿到这条 ACE。专属 SID 只有我们的沙箱进程认。
+ *
+ * 第一次运行之前 profile 还不存在（映射由 runner 创建 profile 时才写进注册表），
+ * 这时退回大范围 SID 并**明确说出来**，而不是假装已经收紧。
+ */
+const ownSid = lookupProfileSid(APP_CONTAINER_NAME)
+const APP_PACKAGES_SID_EFFECTIVE = ownSid ?? APP_CONTAINER_SID
 
 const argv = process.argv.slice(2)
 const remove = argv.includes('--remove')
@@ -32,6 +45,11 @@ if (workspaces.length === 0) {
   process.stderr.write('用法：npm run sandbox:grant -- <工作区>... [--remove]\n')
   process.exitCode = 2
 } else {
+  process.stdout.write(
+    ownSid === undefined
+      ? `授权对象：${APP_CONTAINER_SID}（所有 AppContainer —— 还没跑过沙箱，专属 profile 不存在）\n`
+      : `授权对象：${ownSid}（${APP_CONTAINER_NAME} 专属）\n`,
+  )
   /**
    * 授权项。
    *
@@ -52,9 +70,9 @@ if (workspaces.length === 0) {
 
   let failed = 0
   for (const target of targets) {
-    const spec = `*${APP_PACKAGES_SID}:${remove ? '' : `(OI)(CI)${target.rights}`}`
+    const spec = `*${APP_PACKAGES_SID_EFFECTIVE}:${remove ? '' : `(OI)(CI)${target.rights}`}`
     const args = remove
-      ? [target.path, '/remove', `*${APP_PACKAGES_SID}`]
+      ? [target.path, '/remove', `*${APP_PACKAGES_SID_EFFECTIVE}`]
       : [target.path, '/grant', spec]
     /*
      * 超时给足 120 秒：`%USERPROFILE%` 递归要几十秒，15 秒会被记成失败 ——
@@ -78,7 +96,7 @@ if (workspaces.length === 0) {
     let partial = !ok && !remove
     if (!ok && !remove) {
       const check = spawnSync('icacls', [target.path], { encoding: 'utf8', windowsHide: true, timeout: 120_000 })
-      ok = typeof check.stdout === 'string' && check.stdout.includes(APP_PACKAGES_SID)
+      ok = typeof check.stdout === 'string' && check.stdout.includes(APP_PACKAGES_SID_EFFECTIVE)
     }
     /*
      * 只有"目标路径本身也没拿到 ACE"才算失败。partial 只作为提示 ——
