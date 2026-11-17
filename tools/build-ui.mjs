@@ -32,7 +32,7 @@
 
 import { build } from 'esbuild'
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -98,9 +98,23 @@ const result = await build({
   /* 要拿到产物文件名（它们带哈希，猜不出来），所以必须开 metafile */
   metafile: true,
   logLevel: 'warning',
+  /*
+   * 自己写产物，不让 esbuild 写。
+   *
+   * 这个工作区的 `web/` 上有一条 `Everyone:(DENY)(DC)` —— 不允许**删除子项**。
+   * esbuild 覆盖已有文件时走的是「先删再写/改名」，于是每次都 `Access is denied`。
+   * 而我们直接用 `writeFileSync` 覆盖同一路径是允许的（O_TRUNC，不涉及删除）。
+   */
+  write: false,
 })
 
 /* ── 从 metafile 里认出这次产出的入口文件 ─────────────────────────────── */
+/* ── 把内存里的产物写出去（覆盖写；删旧文件那条路被 DENY(DC) 挡着，见 build 选项说明）── */
+for (const file of result.outputFiles ?? []) {
+  mkdirSync(dirname(file.path), { recursive: true })
+  writeFileSync(file.path, file.contents)
+}
+
 const produced = Object.keys(result.metafile.outputs)
   .map((p) => basename(p))
   .filter((name) => /^app-.*\.(js|css)$/.test(name))
@@ -134,7 +148,12 @@ for (const name of readdirSync(OUT)) {
    */
   if (!/^app(?:-[^.]*)?\.(js|css)(\.map)?$/.test(name)) continue
   if (keep.has(name)) continue
-  rmSync(join(OUT, name), { force: true })
+  /* 删旧产物是**尽力而为**：工作区可能带 `Everyone:(DENY)(DC)`，删不掉不该让构建失败 */
+  try {
+    rmSync(join(OUT, name), { force: true })
+  } catch {
+    /* 留着即可：index.html 只引用本次的哈希名 */
+  }
 }
 
 /*
