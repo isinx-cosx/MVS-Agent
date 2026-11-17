@@ -160,7 +160,7 @@ export function writtenPaths(tool: string, args: unknown): string[] {
  * 只有"内容是我们自己写的"那几个工具不需要审：它们的正文来自模型，
  * 而模型的输入本来就已经过了这一道。
  */
-const SELF_AUTHORED = new Set([
+export const SELF_AUTHORED = new Set([
   'write_file',
   'create_file',
   'edit',
