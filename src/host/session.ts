@@ -76,6 +76,14 @@ import { SessionStore } from './persistence.ts'
 const DEFAULT_MAX_STEPS = 24
 
 /**
+ * 一轮之内允许读进上下文的总行数。
+ *
+ * 不是"单文件上限"——单文件判据挡不住"每个文件读一次"。5000 行大约是几十个
+ * 中等文件的量级：正常排查够用，整片捞取会撞上。
+ */
+const READ_LINES_PER_TURN = 5000
+
+/**
  * 一轮里最多新建多少个文件。
  *
  * 0 字节文件洪水与目录洪水按「写字节」测不到（它们占的是 MFT 与目录项），
@@ -248,6 +256,10 @@ export class Session {
    * 累计覆盖过半就把它降级成"只给元信息"，和敏感路径同一个处置。
    */
   #readSlices = new Map<string, { calls: number; covered: number; total: number }>()
+  /** 本轮累计读取的行数（R6：跨文件的捞取没有单文件判据能挡） */
+  #turnReadLines = 0
+  /** 本轮预算已用完：后续读取一律只给元信息 */
+  #budgetExhausted = false
   /** 分片计数与解码窗口的落盘状态（重启后仍然生效） */
   #reviewState?: ReviewStateStore
   #step = 0
@@ -613,6 +625,14 @@ export class Session {
     this.#turn += 1
     this.#step = 0
     this.#contextWarnedThisTurn = false
+    /*
+     * 每轮重置读取预算。
+     *
+     * R6：逐个文件的判据挡不住"每个文件读一次、一共读两百个文件" ——
+     * 那不是重建单个文件，而是整片捞取。预算按**轮**算，超了本轮剩余读取只给元信息。
+     */
+    this.#turnReadLines = 0
+    this.#budgetExhausted = false
     // ⚠️ 用户消息必须进 `#messages`。
     // 漏掉这一步会得到一个最阴险的 bug：**运行时模型看不到用户消息，
     // 重启后从日志重建才看得到** —— 运行行为和恢复行为不一致，
@@ -1544,16 +1564,51 @@ export class Session {
               }
             : await this.#reviewState.recordSlice(relPath, returned, total)
         this.#readSlices.set(relPath, entry)
-        if (entry.calls >= 5 && entry.covered / total > 0.5) {
+        /* R6：累计本轮读取行数，超预算就本条之后全部降级 */
+        this.#turnReadLines += returned
+        if (this.#turnReadLines > READ_LINES_PER_TURN && !this.#budgetExhausted) {
+          this.#budgetExhausted = true
+          await this.#emit({
+            type: 'error',
+            message:
+              `读取预算用完：本轮累计读了 ${this.#turnReadLines} 行（上限 ${READ_LINES_PER_TURN}）。` +
+              ' 之后同一轮里的读取只给元信息 —— 这是为了防"每个文件读一次"这种整片捞取。',
+          })
+        }
+        /*
+         * R5：三条判据任一命中即降级。
+         *
+         *   ① 覆盖 ≥ 30%            —— 只读一半也会被抓（之前要 >50%）
+         *   ② 次数 ≥ 3 且平均切片 <10 行 —— 典型的"一行一行问"
+         *   ③ 次数 ≥ 8              —— 覆盖不高但一直在问同一个文件
+         *
+         * 加第一条是因为旧阈值能被"读 4 次、每次 1/4"绕开（覆盖只有 100% 才触发是错的：
+         * 它要求 >50%，而 4 次 1/4 正好 100%… 但 3 次各 1/4 就是 75%，旧的 calls>=5 挡住了）。
+         */
+        const coverage = entry.covered / total
+        const averageSlice = entry.covered / Math.max(entry.calls, 1)
+        /*
+         * 第一条必须带 `calls >= 2`：**一次读完整个文件是完全正常的**，
+         * 覆盖 100% 不代表重建。重建的特征是"分多次、每次一小块"把同一份内容凑齐。
+         */
+        const rule =
+          entry.calls >= 2 && coverage >= 0.3
+            ? `累计覆盖 ${Math.round(coverage * 100)}%`
+            : entry.calls >= 3 && averageSlice < 10
+              ? `平均每次只读 ${averageSlice.toFixed(1)} 行`
+              : entry.calls >= 8
+                ? `反复读取 ${entry.calls} 次`
+                : undefined
+        if (rule !== undefined) {
           /* 降级：后续读取只给字节数与行数，不再给内容 */
           if (this.#deps.taint !== undefined) {
-            await this.#deps.taint.add(relPath, 'sensitive-path', '分片读取累计覆盖过半')
+            await this.#deps.taint.add(relPath, 'sensitive-path', `分片读取：${rule}`)
           }
           await this.#emit({
             type: 'error',
             message:
-              `分片读取告警：${relPath} 被读了 ${entry.calls} 次、累计覆盖 ${entry.covered}/${total} 行。` +
-              ' 已把它降级为「只给元信息」，防止逐位重建；要正常读用 clear_taint 解除。',
+              `分片读取告警：${relPath} 被读了 ${entry.calls} 次、累计覆盖 ${entry.covered}/${total} 行` +
+              `（${rule}）。已把它降级为「只给元信息」，防止逐位重建；要正常读用 clear_taint 解除。`,
           })
         }
       }
@@ -1569,6 +1624,30 @@ export class Session {
      * 所以只留「多大、几行」。出口是 `clear_taint`，或者人工自己看。
      */
     if (tool === 'read_file' && relPath !== undefined) {
+      /*
+       * R6：本轮读取预算用完 → 只给元信息。
+       *
+       * 单文件判据对"每个文件读一次、一共读两百个文件"完全无效，而那是整片捞取
+       * （比逐位重建更省事）。预算按轮算，用完就停，事件里说明。
+       */
+      if (this.#budgetExhausted) {
+        const bytes = Buffer.byteLength(result.content, 'utf8')
+        const lineCount = result.content === '' ? 0 : result.content.split('\n').length
+        return {
+          ...result,
+          content:
+            `〔内容未返回〕${relPath}：${bytes} 字节，${lineCount} 行。` +
+            ` 本轮累计读取已超过 ${READ_LINES_PER_TURN} 行预算，剩余读取只给元信息。` +
+            ' 要接着看，请下一条消息里说明目的。',
+          data: {
+            ...(typeof result.data === 'object' && result.data !== null ? result.data : {}),
+            withheld: true,
+            budgetExhausted: true,
+            bytes,
+            lines: lineCount,
+          },
+        }
+      }
       const record = this.#deps.taint === undefined ? undefined : await this.#deps.taint.has(relPath)
       if (record !== undefined || isSensitivePath(relPath)) {
       /* 元信息也要 taint：模型没看过内容，就不许盲改（和整份扣留同一个理由） */
@@ -1645,6 +1724,11 @@ export class Session {
     /* 长度余数判据：完整 base64 必然是 4 的倍数，不是的多半是被切开的片段 */
     const fragments = redactFragments(chunked.text)
     this.#chunkWindows.set(windowKey, chunked.window)
+    /*
+     * 窗口也落盘：只在内存里的话，重启之后第 2、3 段就没法与之前的段拼接 ——
+     * 和分片计数是同一个理由（能靠重启绕过的检测等于没有）。
+     */
+    void this.#reviewState?.recordWindow(windowKey, chunked.window.pieces)
 
     if (scanned.hits.length === 0 && pii.hits.length === 0 && decoded.blobs === 0 && chunked.hits === 0 && fragments.hits === 0) {
       /* grep 的路径扣留可能一条内容规则都没命中 —— 那种情况也要把扣留后的正文交出去 */
