@@ -2094,7 +2094,16 @@ export function App() {
           />
         ) : (
           <>
-        <main id="log" ref={logRef} onScroll={onLogScroll}>
+        <main
+          id="log"
+          ref={logRef}
+          onScroll={onLogScroll}
+          /*
+           * 空状态时给它一个标记：只有这时才把 #log 变成**居中容器**。
+           * 不给普通状态加 flex —— 那会改到所有消息的排版，风险不值得冒。
+           */
+          data-empty={visibleMessages.length === 0 && !hasLive && ready && pending === null ? 'true' : undefined}
+        >
         <div className="inner">
           {/*
             **空状态。**
@@ -2102,7 +2111,7 @@ export function App() {
             截图暴露过这个洞：选中一个空会话时，右侧整片空白 —— 看起来像加载失败。
             空状态要说清三件事：现在是什么状态、为什么会这样、下一步做什么。
           */}
-          {visibleMessages.length === 0 && !hasLive ? (
+          {visibleMessages.length === 0 && !hasLive && ready && pending === null ? (
             <div className="empty">
               <MvsSymbol size={44} />
               <div className="empty-title">这个会话还是空的</div>

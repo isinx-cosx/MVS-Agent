@@ -2391,3 +2391,26 @@ button:disabled {
     animation: none;
   }
 }
+
+/* ── 空状态：真正居中，并且一直留到用户发出第一条消息 ────────────────
+ * 只在 #log[data-empty] 时改容器布局：平时不动，避免影响正常消息排版。
+ */
+#log[data-empty='true'] {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+#log[data-empty='true'] .inner {
+  /* 让里面那块在可视高度里居中，而不是贴着顶部 */
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+#log[data-empty='true'] .empty {
+  /* 居中容器里不需要 40vh 的撑高，靠父级居中即可 */
+  min-height: 0;
+  padding-bottom: 0;
+}
