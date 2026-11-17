@@ -653,6 +653,62 @@ function LiveMessage({ live }: { live: LiveBlock }) {
  *
  * 折叠是默认的：它是"需要时看一眼"的信息，不是每次都该占屏幕。
  */
+/**
+ * 空会话里那句**每 30 秒换一次**的话。
+ *
+ * 为什么要有它：空状态原本只有三行灰字，屏幕中间一大片空白 —— 看起来像没加载出来。
+ * 图形标 + 一句会变的话，传达的是"这里活着，等你说第一句"。
+ *
+ * 三件刻意的设计：
+ *   1. **起始位置随机会挑**，不是每次从第一条开始 —— 每个新会话看到的第一句不同。
+ *   2. **30 秒换一次**：够慢，不会在读的时候跳走；够快，停留稍久就能看到变化。
+ *   3. 文案只说**这个系统真实的样子**，不写营销语。这里出现的每一句都能在代码或
+ *      文档里找到对应实现 —— 空状态是用户第一次接触"这东西怎么想事"的地方，
+ *      拿假话开场，后面说的就都不算数了。
+ */
+const SESSION_TAGLINES: readonly string[] = [
+  '读不设限，所以断网与审核必须靠得住。',
+  '沙箱默认开着：断网、只写工作区、超限杀整棵树。',
+  '被扣留的内容会说出来，不会静默丢。',
+  '每个阻塞态都留了出口，没有死路。',
+  '能撤的才叫改动，撤不回来的叫事故。',
+  '插件不自带代码进宿主进程，只能声明一条 argv。',
+  '不确定就写"不确定"，写成结论要付利息。',
+  '探测之前，先证明探针本身是好的。',
+  '删除要两次确认，因为它不可逆。',
+  '重启不该重置检测 —— 所以状态落盘。',
+  '少挡一点好过一点不挡，但不能让人误以为全防。',
+  '五十毫秒也是一个窗口，所以收紧到十毫秒。',
+  '写入失败要报出来，不然用户以为存了。',
+  '命令装不进沙箱时，说清哪一层没了，而不是假装没事。',
+]
+
+const TAGLINE_INTERVAL_MS = 30_000
+
+function SessionTagline() {
+  /* 起点随机：同一个浏览器里连着开两个新会话，第一句不是同一句 */
+  const [index, setIndex] = useState(() => Math.floor(Math.random() * SESSION_TAGLINES.length))
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      /* 不重放上一条：随机挑，但避开当前这条 */
+      setIndex((current) => {
+        if (SESSION_TAGLINES.length <= 1) return current
+        let next = current
+        while (next === current) next = Math.floor(Math.random() * SESSION_TAGLINES.length)
+        return next
+      })
+    }, TAGLINE_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [])
+
+  return (
+    <div className="empty-tagline" key={index} aria-live="off">
+      {SESSION_TAGLINES[index]}
+    </div>
+  )
+}
+
 function KernelPanel({ kernel }: { kernel: KernelState }) {
   const [open, setOpen] = useState(false)
   const rows: Array<{ key: string; label: string; value: number }> = [
@@ -2048,10 +2104,12 @@ export function App() {
           */}
           {visibleMessages.length === 0 && !hasLive ? (
             <div className="empty">
+              <MvsSymbol size={44} />
               <div className="empty-title">这个会话还是空的</div>
               <div className="empty-hint">
                 在下面说点什么就能开始。工具调用、改了哪些文件、撤销入口，都会出现在这里。
               </div>
+              <SessionTagline />
             </div>
           ) : null}
           {visibleMessages.map((message, index) => (

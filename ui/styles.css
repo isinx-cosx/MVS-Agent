@@ -2355,3 +2355,39 @@ button:disabled {
 .side-brand .mvs-symbol {
   opacity: 0.9;
 }
+
+/* ── 空会话：图形标 + 会换的一句话 ─────────────────────────────────────── */
+.empty .mvs-symbol {
+  color: var(--fg, #eee);
+  opacity: 0.55;
+  margin-bottom: 2px;
+}
+
+.empty-tagline {
+  margin-top: 10px;
+  max-width: 34em;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--dim, #888);
+  /* 换字时的淡入：key 变了会重新挂载，动画重放一次 */
+  animation: tagline-in 420ms ease-out;
+}
+
+@keyframes tagline-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 关了动效就别淡入 —— 尊重系统的"减少动态效果" */
+@media (prefers-reduced-motion: reduce) {
+  .empty-tagline {
+    animation: none;
+  }
+}
