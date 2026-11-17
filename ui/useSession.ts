@@ -145,6 +145,21 @@ const EMPTY_LIVE: LiveBlock = { reasoning: '', text: '', active: false }
  * ⚠️ 这里曾经是"每次挂载都新建一个会话"—— 于是每刷新一次页面就多一条"新会话"，
  * 列表里堆到 190 条。挑现有的既干净，也更符合直觉：刷新该回到你刚才在的地方。
  */
+/**
+ * 当前该用哪个工作区：最近打开过的那个（和守护进程的默认一致）。
+ * 没有工作区时返回 null —— 调用方要给用户一句人话，而不是静默失败。
+ */
+async function defaultWorkspace(): Promise<string | null> {
+  const snapshot = await getState()
+  const workspaces = snapshot.state.workspaces ?? []
+  if (workspaces.length === 0) return null
+  return (
+    [...workspaces].sort(
+      (a, b) => Date.parse(b.lastOpenedAt ?? '') - Date.parse(a.lastOpenedAt ?? ''),
+    )[0]?.path ?? workspaces[0]!.path
+  )
+}
+
 async function pickDefaultSession(): Promise<{ sessionId: string | null; note: string | null }> {
   const before = await getState()
   const workspaces = before.state.workspaces ?? []
@@ -165,14 +180,18 @@ async function pickDefaultSession(): Promise<{ sessionId: string | null; note: s
   )[0]
   if (newest !== undefined) return { sessionId: newest.sessionId, note: null }
 
-  /* 这个工作区一个对话都没有：建一个。用命令回传的 id —— 它是有契约的
-     （见 `test/server.test.ts` 那条"create_session 回传新会话的 id"）。 */
-  const created = await postCommand({ type: 'create_session', workspace })
-  return { sessionId: created.sessionId ?? null, note: null }
+  /*
+   * 这个工作区一个对话都没有：**不建**。
+   *
+   * 空会话不该在磁盘上留痕 —— 用户点"新会话"只是想要一个可以开始的地方，
+   * 真实会话等**第一条消息**发出去时再建。否则列表里会堆一堆空对话，
+   * 而且"点了新会话"和"发出了第一句"在语义上是两件事。
+   */
+  return { sessionId: null, note: null }
 }
 
 export function useSession(selectedId: string | null): SessionState & {
-  send: (text: string) => Promise<void>
+  send: (text: string, workspace?: string) => Promise<string | null>
   stop: () => Promise<void>
   /** 人确认那次结果未知的工具调用，解除阻断（那道门的开关） */
   acknowledge: () => Promise<void>
@@ -590,11 +609,40 @@ export function useSession(selectedId: string | null): SessionState & {
   }, [selectedId, onEvent, patch, reconcile])
 
   const send = useCallback(
-    async (text: string) => {
-      const sessionId = sessionRef.current
-      if (sessionId === null) return
+    /**
+     * 发送。**没有会话就先建一个** —— 建会话的唯一触发点是"用户真的说了话"。
+     *
+     * 返回实际使用的会话 id：App 拿到它才能切过去并刷新列表。返回 null 表示
+     * 没发出去（没有工作区、或创建失败），调用方据此不要清空输入框以外的东西。
+     */
+    async (text: string, workspace?: string): Promise<string | null> => {
+      let sessionId = sessionRef.current
       const trimmed = text.trim()
-      if (trimmed === '') return
+      if (trimmed === '') return null
+
+      /*
+       * 没有会话就**现在建** —— 这是整个应用里唯一创建会话的地方。
+       *
+       * 之前是"点一下新会话就建一个"，于是列表里堆空对话，空状态也一闪而过：
+       * 会话一建好，投影马上回来，`messages` 从"空"变成"一个空会话"。
+       * 现在空会话只存在于界面上，落盘要等用户真的说了第一句话。
+       */
+      if (sessionId === null) {
+        const target = workspace ?? (await defaultWorkspace())
+        if (target === null) {
+          patch({ error: '还没有打开任何工作区。' })
+          return null
+        }
+        const created = await postCommand({ type: 'create_session', workspace: target })
+        const newId = created.sessionId ?? null
+        if (newId === null) {
+          patch({ error: '没能创建会话。' })
+          return null
+        }
+        sessionId = newId
+        sessionRef.current = newId
+        patch({ sessionId: newId })
+      }
 
       patch({
         error: null,
@@ -608,6 +656,7 @@ export function useSession(selectedId: string | null): SessionState & {
       } catch (err) {
         patch({ error: err instanceof Error ? err.message : String(err), running: false })
       }
+      return sessionId
     },
     [patch],
   )

@@ -1222,6 +1222,13 @@ function Sidebar({
 export function App() {
   /* 当前在看哪个对话。`null` = 让 `useSession` 自己挑一个（并记住挑中的那个） */
   const [selected, setSelected] = useState<string | null>(readStoredSession)
+  /*
+   * 「新会话」的草稿目标工作区。`null` = 没有草稿。
+   *
+   * 它只在"点了新会话但还没发消息"这段存在：界面要靠它知道第一条消息
+   * 该建在哪个工作区下，而那时后端还没有任何会话。
+   */
+  const [draftWorkspace, setDraftWorkspace] = useState<string | null>(null)
 
   const {
     ready,
@@ -1665,28 +1672,36 @@ export function App() {
    * ⚠️ **建完不会切过去。** 切会话还没做（切走的会话要断流、切来的要重连并重新
    * watch），所以你会看到它出现在那个工作区列表的最上面，但当前对话没变。
    */
-  const createSession = (workspace: string): void => {
+  /*
+   * 「新会话」**不再立刻在后端建会话**。
+   *
+   * 之前点一下就 create_session，于是：列表里堆空对话；空状态一闪而过（会话一建好
+   * 投影就回来了）。现在这里只是把界面切到"草稿"：记住目标工作区、清掉选中，
+   * 真正的创建发生在用户发出第一条消息的那一刻（见 useSession 的 send）。
+   */
+  /**
+   * 发消息的统一入口：**第一次发送会顺带建会话**，然后把选中切过去。
+   *
+   * 会话 id 只有 send 知道（它是刚建出来的），App 拿到它才能刷新列表、把侧栏
+   * 那一条高亮起来。
+   */
+  const sendMessage = (text: string): void => {
     void (async () => {
-      setCreating(workspace)
-      setActionError(null)
-      try {
-        const created = await postCommand({ type: 'create_session', workspace })
-        refreshIndex()
-        /*
-         * **建完就切过去** —— 两件事都要做：
-         *   · 选中新会话（否则你还停在原来那个）
-         *   · 切回对话页（否则在设置页点加号，新对话建好了你却看不见）
-         */
-        if (created.sessionId !== undefined) {
-          setSelected(created.sessionId)
-          setView('chat')
-        }
-      } catch (err) {
-        setActionError(err instanceof Error ? err.message : String(err))
-      } finally {
-        setCreating(null)
-      }
+      const used = await send(text, draftWorkspace ?? undefined)
+      if (used === null) return
+      /* 草稿落地成真会话：清掉草稿、选中它、刷新列表 */
+      setDraftWorkspace(null)
+      setSelected(used)
+      setView('chat')
+      refreshIndex()
     })()
+  }
+
+  const createSession = (workspace: string): void => {
+    setActionError(null)
+    setDraftWorkspace(workspace)
+    setSelected(null)
+    setView('chat')
   }
 
   const addWorkspace = (): void => {
@@ -1953,7 +1968,7 @@ export function App() {
     setDraft('')
     const el = inputRef.current
     if (el !== null) el.style.height = 'auto'
-    void send(text)
+    void sendMessage(text)
   }
 
   return (
