@@ -129,6 +129,9 @@ const DeleteProcThreadAttributeList = kernel.func('void __stdcall DeleteProcThre
 const CreateFileW = kernel.func(
   'void * __stdcall CreateFileW(str16, uint32, uint32, SECURITY_ATTRIBUTES *, uint32, uint32, void *)',
 )
+const GetDiskFreeSpaceExW = kernel.func(
+  'int32 __stdcall GetDiskFreeSpaceExW(str16, void *, void *, void *)',
+)
 const CreateJobObjectW = kernel.func('void * __stdcall CreateJobObjectW(void *, str16)')
 const SetInformationJobObject = kernel.func(
   'int32 __stdcall SetInformationJobObject(void *, int32, JOBOBJECT_EXTENDED_LIMIT_INFORMATION *, uint32)',
@@ -390,6 +393,9 @@ if (!limitsSet) report.jobLimits = 'not-set'
 /* ② 等结束：墙钟超时 + 写字节轮询 */
 const timeoutMs = numOf('--timeout-ms', 120_000)
 const maxWriteBytes = numOf('--max-write-mb', 512) * 1024 * 1024
+/* 磁盘底线：默认 1 GiB。跌破就杀树 —— 见循环里的说明 */
+const minFreeBytes = numOf('--min-free-mb', 1024) * 1024 * 1024
+let lastDiskCheckAt = 0
 const startedAt = Date.now()
 let killedFor
 let writeBytes = 0
@@ -413,6 +419,27 @@ const sampleWriteBytes = () => {
  */
 const pollMs = () => (Date.now() - startedAt < 2000 ? 10 : 50)
 while (WaitForSingleObject(hProcess, pollMs()) === WAIT_TIMEOUT) {
+  /*
+   * 磁盘底线守护。
+   *
+   * Job Object 没有磁盘配额，而 `fsutil quota` 对 AppContainer SID **不可行**
+   * （它要求可解析的账户名，实测报 1332「帐户名与安全标识间无任何映射」）。
+   * 所以退一步守**整机**：剩余空间跌破底线就杀树 —— 拦不住"写太多"，
+   * 但拦得住"把盘写满导致整机不可用"。
+   */
+  if (Date.now() - lastDiskCheckAt > 500) {
+    lastDiskCheckAt = Date.now()
+    const freeBuf = Buffer.alloc(8)
+    const totalBuf = Buffer.alloc(8)
+    if (GetDiskFreeSpaceExW(cwd ?? process.cwd(), freeBuf, totalBuf, null) !== 0) {
+      const freeBytes = Number(freeBuf.readBigUInt64LE(0))
+      if (freeBytes < minFreeBytes) {
+        if (job !== null) TerminateJobObject(job, 1)
+        killedFor = 'disk-floor'
+        break
+      }
+    }
+  }
   pump()
   writeBytes = sampleWriteBytes()
   if (writeBytes > maxWriteBytes) {
