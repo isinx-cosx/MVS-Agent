@@ -2423,3 +2423,48 @@ button:disabled {
 #log[data-empty='true'] .empty .mvs-symbol {
   opacity: 0.5;
 }
+
+/* ── 空状态（放大版）────────────────────────────────────────────────────
+ * 图标 132（原来 44 的 3 倍），标语挪到图标右边，整块横向排列。
+ * 图标用**纯黑**：它是品牌标，不跟着主题走 —— 深色主题下会看不见，
+ * 所以同时给了 .theme-dark 的兜底（见下）。
+ */
+#log[data-empty='true'] .empty {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  padding: 0 32px;
+}
+
+#log[data-empty='true'] .empty .mvs-symbol {
+  color: #000;
+  opacity: 1;
+}
+
+/* 深色主题下纯黑等于隐形，换成浅色 */
+:root[data-theme='dark'] #log[data-empty='true'] .empty .mvs-symbol,
+body[data-theme='dark'] #log[data-empty='true'] .empty .mvs-symbol {
+  color: #f2f2f2;
+}
+
+.empty-tagline {
+  margin-top: 0;
+  max-width: 26em;
+  text-align: left;
+  font-size: 19px;
+  line-height: 1.75;
+}
+
+/* 窄屏时回到竖排，否则两栏挤成一团 */
+@media (max-width: 720px) {
+  #log[data-empty='true'] .empty {
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .empty-tagline {
+    text-align: center;
+    font-size: 16px;
+  }
+}

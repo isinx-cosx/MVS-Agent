@@ -2127,7 +2127,7 @@ export function App() {
           */}
           {visibleMessages.length === 0 && !hasLive && ready && pending === null ? (
             <div className="empty">
-              <MvsSymbol size={44} />
+              <MvsSymbol size={132} />
               <SessionTagline />
             </div>
           ) : null}
