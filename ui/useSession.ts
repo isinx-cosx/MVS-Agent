@@ -561,25 +561,34 @@ export function useSession(selectedId: string | null): SessionState & {
       try {
         let target = selectedId
         let note: string | null = null
-
-        /* 选中的那个可能已经被删掉：先确认它还在，不在就退回自动挑选 */
+        /*
+         * 选中的那条**已经不在了**（被删、或日志被清理）。
+         *
+         * 以前这里会"自动切到最近的一个"并配一句说明。两个问题：
+         *   · 用户没点任何东西，界面自己跳进了另一个对话 —— 位置被悄悄换掉；
+         *   · 现在"没有会话"是合法状态（草稿），不需要拿另一条来顶。
+         * 所以退回草稿：空状态、光标在输入框，要不要接着聊别的由用户决定。
+         */
+        let vanished = false
         if (target !== null) {
           try {
             await getProjection(target)
           } catch {
-            note = '那个对话已经不在了，已自动切到最近的一个。'
+            vanished = true
             target = null
           }
         }
 
-        if (target === null) {
+        if (target === null && !vanished) {
+          /* 首屏本来就没选过：挑最近的一条，符合"刷新回到刚才在的地方" */
           const picked = await pickDefaultSession()
           target = picked.sessionId
-          note = note ?? picked.note
+          note = picked.note
         }
 
         if (target === null) {
-          patch({ ready: true, error: note ?? '没有可用的会话。' })
+          /* 草稿态：允许没有会话，第一次发消息时才真正创建 */
+          patch({ ready: true, sessionId: null, note })
           return
         }
         if (cancelled) return
