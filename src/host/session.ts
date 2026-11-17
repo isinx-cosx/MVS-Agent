@@ -41,6 +41,7 @@ import { collect } from '../model/collect.ts'
 import { computeCost } from '../model/cost.ts'
 import { describeHits, describePii, isSensitivePath, looksLikeSensitivePathLine, newChunkWindow, redactChunkedSecrets, redactEncodedDeep, redactFragments, redactPii, scanText, type ChunkWindow } from '../guard/scan.ts'
 import { shouldScanOutput, wantsPlainOutput, writtenPaths, type TaintStore } from '../guard/review.ts'
+import { ReviewStateStore } from '../guard/state.ts'
 import { isScriptPath, loopWarningNote } from '../tools/loop-lint.ts'
 import type { Message, ToolCall, Usage } from '../model/types.ts'
 import type { ToolRegistry } from '../tools/registry.ts'
@@ -247,6 +248,8 @@ export class Session {
    * 累计覆盖过半就把它降级成"只给元信息"，和敏感路径同一个处置。
    */
   #readSlices = new Map<string, { calls: number; covered: number; total: number }>()
+  /** 分片计数与解码窗口的落盘状态（重启后仍然生效） */
+  #reviewState?: ReviewStateStore
   #step = 0
   #interrupted: { callId: string; tool: string; argsJson: string } | null = null
   #pending: PendingApproval | null = null
@@ -345,6 +348,17 @@ export class Session {
 
   async init(): Promise<InitResult> {
     const warnings: string[] = []
+
+    /*
+     * 审核状态（分片计数、解码窗口）在会话初始化时读回。
+     *
+     * 不读回来的话，"读 4 次 → 重启 → 再读 4 次"就能绕过阈值 —— 检测等于没有。
+     * 加载失败不阻断启动：状态是加固，不是功能，缺了只是判据更松。
+     */
+    this.#reviewState = ReviewStateStore.forWorkspace(this.#deps.workspace)
+    await this.#reviewState.load()
+    for (const [rel, entry] of this.#reviewState.slices()) this.#readSlices.set(rel, entry)
+
     const { items: envelopes, malformed } = await this.#deps.store.readEvents()
     this.#malformedEvents = malformed
     if (malformed > 0) {
@@ -1516,10 +1530,19 @@ export class Session {
       const total = typeof meta.totalLines === 'number' ? meta.totalLines : 0
       const returned = typeof meta.returnedLines === 'number' ? meta.returnedLines : 0
       if (total > 0 && returned > 0) {
-        const entry = this.#readSlices.get(relPath) ?? { calls: 0, covered: 0, total }
-        entry.calls += 1
-        entry.covered += Math.min(returned, total)
-        entry.total = total
+        /*
+         * 计数**必须落盘**：只在内存里的话，"读 4 次 → 重启 → 再读 4 次"永远到不了阈值，
+         * 一个能靠重启绕过的检测等于没有。状态文件与 taint 同一处。
+         */
+        const entry =
+          this.#reviewState === undefined
+            ? {
+                calls: (this.#readSlices.get(relPath)?.calls ?? 0) + 1,
+                covered: (this.#readSlices.get(relPath)?.covered ?? 0) + Math.min(returned, total),
+                total,
+                updatedAt: new Date().toISOString(),
+              }
+            : await this.#reviewState.recordSlice(relPath, returned, total)
         this.#readSlices.set(relPath, entry)
         if (entry.calls >= 5 && entry.covered / total > 0.5) {
           /* 降级：后续读取只给字节数与行数，不再给内容 */

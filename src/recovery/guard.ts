@@ -266,15 +266,33 @@ options: { restoreDeletedByCommands?: boolean; taint?: TaintStore } = {},
      * 配一个 `index.json`，恢复用 `npm run ads:restore -- <事务 id>`。
      */
     const savedStreams: Array<{ path: string; stream: string; bytes: number; file: string }> = []
+    /*
+     * 没存下来的流必须**说出来**。
+     *
+     * 之前超过 1 MB 直接 `continue` —— 结果是用户以为"已经存了"，事后恢复才发现少了。
+     * 静默丢数据和说谎没区别，所以这里逐条记下原因，并在结果文案里点名。
+     */
+    const skippedStreams: Array<{ path: string; stream: string; bytes?: number; reason: string }> = []
     if (ads.length > 0) {
       const adsDir = path.join(this.#manager.root, '.mvs', 'ads', transaction.id)
       await mkdir(adsDir, { recursive: true })
       for (const item of ads) {
         for (const stream of item.streams) {
           const content = await readStream(path.join(this.#manager.root, item.path), stream)
-          if (content === undefined) continue
+          if (content === undefined) {
+            skippedStreams.push({ path: item.path, stream, reason: '读不出来（可能刚被删除）' })
+            continue
+          }
           /* 单个流上限 1 MB：再大的话存进去只是把问题搬了个地方 */
-          if (content.length > 1024 * 1024) continue
+          if (content.length > 1024 * 1024) {
+            skippedStreams.push({
+              path: item.path,
+              stream,
+              bytes: content.length,
+              reason: '超过 1 MB 上限，未快照',
+            })
+            continue
+          }
           const file = `${savedStreams.length}.bin`
           await writeFile(path.join(adsDir, file), content)
           savedStreams.push({ path: item.path, stream, bytes: content.length, file })
@@ -284,11 +302,19 @@ options: { restoreDeletedByCommands?: boolean; taint?: TaintStore } = {},
     }
 
     if (ads.length > 0) {
+      const skippedNote =
+        skippedStreams.length === 0
+          ? ''
+          : ` 有 ${skippedStreams.length} 条流**没有**快照：` +
+            skippedStreams
+              .map((item) => `${item.path}:${item.stream}（${item.reason}）`)
+              .join('、') +
+            '。'
       const note =
-        `\\n\\n〔ADS〕这条命令给 ${ads.length} 个文件写了**替代数据流**：` +
+        `\n\n〔ADS〕这条命令给 ${ads.length} 个文件写了**替代数据流**：` +
         ads.map((item) => `${item.path}（${item.streams.join(', ')}）`).join('、') +
         `。常规工具看不到它们；${savedStreams.length} 条流的内容已快照到 .mvs/ads/${transaction.id}/，` +
-        `需要恢复时用 npm run ads:restore -- ${transaction.id}。要清掉请显式删除。`
+        `需要恢复时用 npm run ads:restore -- ${transaction.id}。${skippedNote}要清掉请显式删除。`
       return {
         result: {
           ...result,
@@ -296,7 +322,11 @@ options: { restoreDeletedByCommands?: boolean; taint?: TaintStore } = {},
           data: {
             ...(typeof result.data === 'object' && result.data !== null ? result.data : {}),
             ads,
-            adsSnapshot: { transactionId: transaction.id, saved: savedStreams.length },
+            adsSnapshot: {
+              transactionId: transaction.id,
+              saved: savedStreams.length,
+              skipped: skippedStreams,
+            },
           },
         },
         transactionId: transaction.id,
