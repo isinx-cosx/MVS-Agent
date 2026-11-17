@@ -23,7 +23,7 @@ test(
   '句柄隔离：可继承句柄不会进到沙箱里的子进程（探针）',
   { skip: isWindows ? false : '只有 Windows 有这套沙箱' },
   async () => {
-    const probe = path.join(process.cwd(), 'tools', 'handle-list-probe.mjs')
+    const probe = path.join(process.cwd(), 'tools', 'handle-enum-probe.mjs')
     const run = spawnSync(process.execPath, [probe], { encoding: 'utf8', timeout: 120_000, windowsHide: true })
     const output = `${run.stdout ?? ''}${run.stderr ?? ''}`
 
@@ -34,14 +34,14 @@ test(
     }
 
     /*
-     * 只断言"没有泄漏"，**不**断言 isolated。
+     * 现在是**双向**结论：对照里句柄出现在子进程的句柄表中，沙箱里不出现。
      *
-     * 要在容器里区分"没被继承"和"不是 libuv 的 fd"，子进程必须用 `WriteFile`
-     * 直接写裸 HANDLE —— 那需要加载原生模块，而容器不允许（`realpath 'C:\'` 被拒）。
-     * 所以这条探针结构上只能证明单侧；详见 tools/handle-list-probe.mjs 末尾。
+     * 做法是父进程侧枚举子进程句柄表（`NtQuerySystemInformation`），而不是让子进程
+     * 自己写那个句柄 —— 后者走 libuv 的 fd 表，两侧都会 EBADF，证明不了任何事。
      */
-    assert.equal(output.includes('"verdict":"LEAKED"'), false, `不允许出现泄漏：${output.slice(0, 200)}`)
-    assert.match(output, /EBADF|LEAKED/)
+    assert.match(output, /"verdict":"isolated-verified"/, `期望 isolated-verified，实际：${output.slice(0, 240)}`)
+    assert.match(output, /"control":\{[^}]*"present":true/)
+    assert.match(output, /"sandbox":\{[^}]*"present":false/)
   },
 )
 
