@@ -15,6 +15,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 import { ReviewStateStore } from '../src/guard/state.ts'
+import { diffSnapshots, walkTree } from '../src/recovery/snapshot.ts'
 
 const isWindows = process.platform === 'win32'
 
@@ -83,3 +84,45 @@ test('分片计数：超过 24 小时的条目在加载时被丢弃', async () =
     await rm(root, { recursive: true, force: true })
   }
 })
+
+/*
+ * S5：只改 ADS、主数据流不变时，也必须产生事务。
+ *
+ * 这是唯一一类"文件看起来没动过"的改动 —— size / mtime / hash 全都不变，
+ * 所以 diff 只能靠额外的判据（流条数）发现它。
+ */
+test(
+  'S5：只写 ADS（主数据流不变）也要被 diff 抓到',
+  { skip: isWindows ? false : '只有 NTFS 有替代数据流' },
+  async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'mvs-ads-diff-'))
+    try {
+      await writeFile(path.join(root, 'a.txt'), 'main', 'utf8')
+      const base = { root, excludes: new Set<string>(), maxFileBytes: 1024 * 1024, verify: true }
+      const before = await walkTree(base)
+
+      /* 只写流：主数据流一个字节都没动 */
+      await writeFile(path.join(root, 'a.txt') + ':secret', 'hidden', 'utf8')
+      const after = await walkTree({
+        ...base,
+        previous: { id: 'b', createdAt: '1970-01-01T00:00:00.000Z', root, entries: before.entries, coverage: before.coverage },
+      })
+
+      const streamsBefore = before.entries['a.txt']?.streamCount
+      if (streamsBefore === undefined) {
+        assert.ok(true, '这台机器枚举不了 ADS（没有 koffi），跳过')
+        return
+      }
+
+      const diff = diffSnapshots(
+        { id: 'b', createdAt: '1970-01-01T00:00:00.000Z', root, entries: before.entries, coverage: before.coverage },
+        { id: 'a', createdAt: '1970-01-01T00:00:01.000Z', root, entries: after.entries, coverage: after.coverage },
+      )
+      assert.deepEqual(diff.modified, ['a.txt'], '只改 ADS 也要出现在 modified 里')
+      assert.equal(streamsBefore, 0)
+      assert.equal(after.entries['a.txt']?.streamCount, 1)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)

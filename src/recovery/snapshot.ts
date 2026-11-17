@@ -11,6 +11,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { listStreams } from './ads.ts'
 import { createReadStream } from 'node:fs'
 import { lstat, readdir } from 'node:fs/promises'
 import path from 'node:path'
@@ -103,12 +104,30 @@ export async function walkTree(options: WalkOptions): Promise<WalkResult> {
       }
     }
 
+    /*
+     * 记一条"非默认数据流的条数"。
+     *
+     * 只改 ADS 时主数据流的 size / mtime / hash 全都不变，diff 会认为文件没动过 ——
+     * 事务不产生，ADS 枚举也就跑不到。记条数之后这类改动同样会被 diff 抓出来。
+     *
+     * 代价是每个文件多一次 `FindFirstStreamW`；拿不到枚举能力时记 `undefined`
+     * （"查不了"），而不是 0（"确实没有"）—— 两者含义完全不同。
+     */
+    let streamCount: number | undefined
+    if (reuse && cached.streamCount !== undefined) {
+      streamCount = cached.streamCount
+    } else {
+      const listing = await listStreams(abs)
+      if (listing.available) streamCount = listing.streams.length
+    }
+
     entries[rel] = {
       path: rel,
       size: stats.size,
       mtimeMs: stats.mtimeMs,
       hash,
       mode: stats.mode,
+      streamCount,
     }
   }
 
@@ -214,7 +233,16 @@ export function diffSnapshots(a: Snapshot, b: Snapshot): ChangeSet {
   for (const [rel, entry] of Object.entries(b.entries)) {
     const before = a.entries[rel]
     if (before === undefined) added.push(rel)
-    else if (before.hash !== entry.hash) modified.push(rel)
+    /*
+     * 除了 hash，还比 **ADS 条数**：只往 `a.txt:secret` 写内容时，主数据流的
+     * size / mtime / hash 全都不变 —— 只比 hash 的话这种改动永远进不了事务，
+     * "命令改了什么"就少了一块。
+     *
+     * `undefined` 当 0 处理：那是"这台机器枚举不了"，不该和"确实没有流"比出差异。
+     */
+    else if (before.hash !== entry.hash || (before.streamCount ?? 0) !== (entry.streamCount ?? 0)) {
+      modified.push(rel)
+    }
   }
   for (const rel of Object.keys(a.entries)) {
     if (b.entries[rel] === undefined) removed.push(rel)

@@ -30,6 +30,16 @@ export interface SnapshotEntry {
   hash: string
   /** 保留可执行位（POSIX 有意义，Windows 上无意义） */
   mode: number
+  /**
+   * 非默认数据流的条数（NTFS ADS）。
+   *
+   * 为什么需要它：`a.txt:secret` 写进去之后，主数据流的 size / mtime / hash **全都不变** ——
+   * 于是 diff 看不到任何变化，事务根本不产生，"命令改了什么"里就少了这一块。
+   * 记条数之后，只改 ADS 也会被 diff 抓出来。
+   *
+   * `undefined` 表示"这台机器枚举不了"（没有 koffi / 非 Windows），与 `0`（确实没有流）区分。
+   */
+  streamCount?: number
 }
 
 /**
