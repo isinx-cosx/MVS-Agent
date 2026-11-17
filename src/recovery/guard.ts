@@ -1,5 +1,6 @@
 import path from 'node:path'
-import { listStreams } from './ads.ts'
+import { listStreams, readStream } from './ads.ts'
+import { mkdir, writeFile } from 'node:fs/promises'
 /**
  * 恢复守卫：包在**工具分发之外**。
  *
@@ -256,23 +257,47 @@ options: { restoreDeletedByCommands?: boolean; taint?: TaintStore } = {},
       }
       if (listing.streams.length > 0) ads.push({ path: rel, streams: listing.streams })
     }
+
+    /*
+     * 把流的内容也存一份。
+     *
+     * 只报"有这个流"是不够的：用户想知道的是"里面是什么"，事后要能恢复。
+     * 存在 `.mvs/ads/<事务 id>/` 下（`.mvs` 本身被排除在快照外，不会自我递归），
+     * 配一个 `index.json`，恢复用 `npm run ads:restore -- <事务 id>`。
+     */
+    const savedStreams: Array<{ path: string; stream: string; bytes: number; file: string }> = []
+    if (ads.length > 0) {
+      const adsDir = path.join(this.#manager.root, '.mvs', 'ads', transaction.id)
+      await mkdir(adsDir, { recursive: true })
+      for (const item of ads) {
+        for (const stream of item.streams) {
+          const content = await readStream(path.join(this.#manager.root, item.path), stream)
+          if (content === undefined) continue
+          /* 单个流上限 1 MB：再大的话存进去只是把问题搬了个地方 */
+          if (content.length > 1024 * 1024) continue
+          const file = `${savedStreams.length}.bin`
+          await writeFile(path.join(adsDir, file), content)
+          savedStreams.push({ path: item.path, stream, bytes: content.length, file })
+        }
+      }
+      await writeFile(path.join(adsDir, 'index.json'), `${JSON.stringify(savedStreams, null, 2)}\n`, 'utf8')
+    }
+
     if (ads.length > 0) {
       const note =
         `\\n\\n〔ADS〕这条命令给 ${ads.length} 个文件写了**替代数据流**：` +
-        ads.map((item) => `${item.path}（${item.streams.join(
-', '
-)}）`).join(
-'、'
-) +
-        
-'。常规工具看不到它们，恢复层也不快照它们 —— 要清掉请显式删除。'
+        ads.map((item) => `${item.path}（${item.streams.join(', ')}）`).join('、') +
+        `。常规工具看不到它们；${savedStreams.length} 条流的内容已快照到 .mvs/ads/${transaction.id}/，` +
+        `需要恢复时用 npm run ads:restore -- ${transaction.id}。要清掉请显式删除。`
       return {
         result: {
           ...result,
-          content: `${result.content}${note}` ,
-          data: { ...(typeof result.data === 
-'object'
- && result.data !== null ? result.data : {}), ads },
+          content: `${result.content}${note}`,
+          data: {
+            ...(typeof result.data === 'object' && result.data !== null ? result.data : {}),
+            ads,
+            adsSnapshot: { transactionId: transaction.id, saved: savedStreams.length },
+          },
         },
         transactionId: transaction.id,
       }

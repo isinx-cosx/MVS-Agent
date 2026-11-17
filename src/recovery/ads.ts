@@ -1,3 +1,4 @@
+import { readFile, writeFile } from 'node:fs/promises'
 /**
  * NTFS 替代数据流（ADS）枚举 —— 让"藏在文件里的另一份内容"可见。
  *
@@ -124,5 +125,29 @@ export async function listStreams(filePath: string): Promise<StreamListing> {
       streams: [],
       reason: error instanceof Error ? error.message : String(error),
     }
+  }
+}
+
+/**
+ * 读出一条替代数据流的内容。
+ *
+ * 读内容**不需要** FFI：Windows 上 `fs` 把 `a.txt:secret` 当成普通路径。
+ * 只有"枚举有哪些流"需要 `FindFirstStreamW`，那是上面那个函数的事。
+ */
+export async function readStream(filePath: string, streamName: string): Promise<Buffer | undefined> {
+  try {
+    return await readFile(`${filePath}:${streamName}`)
+  } catch {
+    return undefined
+  }
+}
+
+/** 写回一条替代数据流（恢复用） */
+export async function writeStream(filePath: string, streamName: string, content: Buffer): Promise<boolean> {
+  try {
+    await writeFile(`${filePath}:${streamName}`, content)
+    return true
+  } catch {
+    return false
   }
 }
