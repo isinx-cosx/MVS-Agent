@@ -420,8 +420,25 @@ export class Policy {
     /*
      * 联网命令的逃生开关。`npm install` 这类命令本来就要联网，
      * 一整片 deny 而不给出口，用户会去改源码或者干脆关掉整个策略层。
+     *
+     * 两种写法：
+     *   MVS_ALLOW_NET=1             全部放行（老写法，等于把整片规则关掉）
+     *   MVS_ALLOW_NET=npm,pip,git   只放行**命令里出现这些词**的调用
+     *
+     * 为什么要第二种：为了装依赖而关掉整片规则，等于同时放行 `curl` / `powershell`
+     * 这些真正的出口。按命令白名单能把"装依赖"和"往外传数据"分开。
      */
-    const allowNetwork = process.env['MVS_ALLOW_NET'] === '1'
+    const allowNetworkRaw = process.env['MVS_ALLOW_NET']?.trim() ?? ''
+    const allowNetworkAll = allowNetworkRaw === '1'
+    const allowNetworkWords = allowNetworkAll
+      ? []
+      : allowNetworkRaw
+          .split(',')
+          .map((item) => item.trim().toLowerCase())
+          .filter((item) => item !== '')
+    const netText = `${request.tool} ${key}`.toLowerCase()
+    const allowNetwork =
+      allowNetworkAll || (allowNetworkWords.length > 0 && allowNetworkWords.some((word) => netText.includes(word)))
     const fromRules = this.#matchRules(request, key, hits.length > 0, allowNetwork)
 
     // ── 4. 默认 ──────────────────────────────────────────────────────

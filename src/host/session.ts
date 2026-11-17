@@ -262,6 +262,13 @@ export class Session {
   #budgetExhausted = false
   /** 分片计数与解码窗口的落盘状态（重启后仍然生效） */
   #reviewState?: ReviewStateStore
+  /**
+   * 本轮审核统计：扣了多少、什么类型。
+   *
+   * 之前这些信息只散在各次 policy_decision 里，想知道"这一轮到底挡住了什么"
+   * 只能一条条翻事件流。每轮结束发一条汇总，UI 与 CLI 都能直接用。
+   */
+  #reviewStats = { secrets: 0, pii: 0, encoded: 0, fragments: 0, chunked: 0, withheld: 0 }
   #step = 0
   #interrupted: { callId: string; tool: string; argsJson: string } | null = null
   #pending: PendingApproval | null = null
@@ -652,6 +659,15 @@ export class Session {
       await this.#setStatus('error')
     } finally {
       this.#abort = null
+      /*
+       * 审核统计：这一轮挡下了什么。只在真有命中时发，避免每轮一条噪声。
+       * 重置放在这里（而不是消息开头），这样崩溃的一轮也能留下痕迹。
+       */
+      const stats = this.#reviewStats
+      if (stats.secrets + stats.pii + stats.encoded + stats.fragments + stats.chunked + stats.withheld > 0) {
+        await this.#emit({ type: 'review_stats', turn: this.#turn, stats })
+      }
+      this.#reviewStats = { secrets: 0, pii: 0, encoded: 0, fragments: 0, chunked: 0, withheld: 0 }
       await this.#emit({ type: 'turn_finished', turn: this.#turn, status: this.#status })
       await this.#syncCheckpoint()
     }

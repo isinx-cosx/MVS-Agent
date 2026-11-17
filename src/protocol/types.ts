@@ -114,6 +114,18 @@ export type HostEvent =
    */
   | ({ type: 'revert_settled' } & RevertOutcome)
   | { type: 'turn_finished'; turn: number; status: SessionStatus }
+  /**
+   * 本轮审核统计：挡下了什么、多少条。
+   *
+   * 之前这些信息只散在各次 `policy_decision` 里，想知道"这一轮到底扣了什么"
+   * 只能一条条翻事件流。单独一条汇总让 UI 和 CLI 都能直接显示。
+   * 只在**真有命中**时发，避免每轮一条噪声。
+   */
+  | {
+      type: 'review_stats'
+      turn: number
+      stats: { secrets: number; pii: number; encoded: number; fragments: number; chunked: number; withheld: number }
+    }
   | { type: 'notice'; code: string; message: string }
   | { type: 'error'; message: string }
 
