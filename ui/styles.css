@@ -2325,3 +2325,16 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* 品牌图形标：跟着文字颜色走，和文字基线对齐 */
+.mvs-symbol {
+  flex: 0 0 auto;
+  color: var(--fg, #eee);
+  opacity: 0.8;
+  vertical-align: -2px;
+}
+
+/* 折叠态时压低存在感，展开或悬停时提亮 —— 它是个标记，不该抢标题的位置 */
+.changes-toggle:hover .mvs-symbol {
+  opacity: 1;
+}

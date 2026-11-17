@@ -31,6 +31,7 @@ import { resetSettings, updateSettings, useSettings } from './settings.ts'
 import { shortTime, useIndex } from './useIndex.ts'
 import { useJitter } from './useJitter.ts'
 import { useSession, type KernelState, type LiveBlock } from './useSession.ts'
+import { MvsSymbol } from './brand.tsx'
 
 /** 诊断读数只在 `?debug` 时出现 —— 平时不占地方，也不参与布局 */
 const DEBUG = new URLSearchParams(location.search).has('debug')
@@ -675,6 +676,7 @@ function KernelPanel({ kernel }: { kernel: KernelState }) {
         <span className="chev" aria-hidden="true">
           {open ? '▾' : '▸'}
         </span>
+        <MvsSymbol size={13} />
         <span>内核</span>
         {/* 没有数据时**不要显示 0** —— "没发生"和"还没数据"是两件事 */}
         <span className="count">{kernel.seen ? total : '—'}</span>
