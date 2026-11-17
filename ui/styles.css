@@ -2414,3 +2414,12 @@ button:disabled {
   min-height: 0;
   padding-bottom: 0;
 }
+
+/* 简化后的空状态：只有图形标和一句话，间距靠容器给 */
+#log[data-empty='true'] .empty {
+  gap: 14px;
+}
+
+#log[data-empty='true'] .empty .mvs-symbol {
+  opacity: 0.5;
+}

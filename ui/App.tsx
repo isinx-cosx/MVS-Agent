@@ -2122,17 +2122,12 @@ export function App() {
         <div className="inner">
           {/*
             **空状态。**
-
-            截图暴露过这个洞：选中一个空会话时，右侧整片空白 —— 看起来像加载失败。
-            空状态要说清三件事：现在是什么状态、为什么会这样、下一步做什么。
+            只留图形标和一句话 —— 说明文字属于"第一次用才会读的东西"，
+            而这里每次新建会话都会看到，多一行就是多一行噪音。
           */}
           {visibleMessages.length === 0 && !hasLive && ready && pending === null ? (
             <div className="empty">
               <MvsSymbol size={44} />
-              <div className="empty-title">这个会话还是空的</div>
-              <div className="empty-hint">
-                在下面说点什么就能开始。工具调用、改了哪些文件、撤销入口，都会出现在这里。
-              </div>
               <SessionTagline />
             </div>
           ) : null}
