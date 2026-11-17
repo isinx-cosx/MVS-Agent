@@ -22,6 +22,7 @@
     "maintain": "node src/cli/maintain.ts",
     "sandbox:label": "node src/cli/sandbox-label.ts",
     "ads:restore": "node src/cli/ads-restore.ts",
+    "sandbox:quota": "node src/cli/sandbox-quota.ts",
     "sandbox:grant": "node src/cli/sandbox-grant.ts",
     "plugins": "node src/cli/plugins.ts",
     "serve": "node src/cli/serve.ts",

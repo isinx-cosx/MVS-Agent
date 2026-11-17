@@ -365,7 +365,18 @@ const sampleWriteBytes = () => {
   return ok !== 0 ? Number(accountingBuf.readBigUInt64LE(48 + 32)) : 0
 }
 
-while (WaitForSingleObject(hProcess, 50) === WAIT_TIMEOUT) {
+/*
+ * 轮询间隔自适应：前 2 秒用 10 ms（突发写最可能发生在这段），之后退到 50 ms。
+ *
+ * 为什么不能只靠轮询：Job Object **没有磁盘配额**，"写超限"永远是事后发现。
+ * NTFS 按 SID 的硬配额才是正解，但 `fsutil quota` 需要管理员
+ * （实测 `fsutil quota query C:` 直接 Access denied）。所以这里做两件事：
+ *   · 窗口从 50 ms 缩到 10 ms（突发写被抓住的概率提高约 5 倍）
+ *   · 长命令退避，避免 10 ms 轮询吃满 CPU
+ * 硬配额怎么做见 `npm run sandbox:quota`。
+ */
+const pollMs = () => (Date.now() - startedAt < 2000 ? 10 : 50)
+while (WaitForSingleObject(hProcess, pollMs()) === WAIT_TIMEOUT) {
   writeBytes = sampleWriteBytes()
   if (writeBytes > maxWriteBytes) {
     /*
