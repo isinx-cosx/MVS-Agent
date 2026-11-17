@@ -45,6 +45,29 @@ export interface LiveBlock {
   active: boolean
 }
 
+/**
+ * 「内核这一轮做了什么」—— 审核统计 + 最近的判定。
+ *
+ * 这些信息以前只在事件流里，界面上完全看不到：用户不知道有多少内容被扣留、
+ * 哪些路径被打了标记、有没有工具因为沙箱降级而少了一层防护。
+ *
+ * 只保留**最近一小段**：这是"当下发生了什么"，不是审计日志（审计在 `.mvs/` 里）。
+ */
+export interface KernelState {
+  /** 累计统计（会话内累加，不按轮清零 —— 用户关心的是"总共"） */
+  stats: { secrets: number; pii: number; encoded: number; fragments: number; chunked: number; withheld: number }
+  /** 最近的判定，最新在前，最多 5 条 */
+  decisions: Array<{ tool: string; decision: string; reason: string; message: string }>
+  /** 有没有收到过 review_stats（区分"没发生"和"还没数据"） */
+  seen: boolean
+}
+
+export const EMPTY_KERNEL: KernelState = {
+  stats: { secrets: 0, pii: 0, encoded: 0, fragments: 0, chunked: 0, withheld: 0 },
+  decisions: [],
+  seen: false,
+}
+
 export interface SessionState {
   ready: boolean
   sessionId: string | null
@@ -76,6 +99,8 @@ export interface SessionState {
   error: string | null
   note: string | null
   status: string
+  /** 「内核这一轮做了什么」：审核统计 + 最近判定（见 KernelState） */
+  kernel: KernelState
   /** 当前会话的权限模式（投影是真相）。空串表示还没读到 */
   mode: string
   /** 上下文用量与窗口 —— 只用于显示 */
@@ -212,6 +237,7 @@ export function useSession(selectedId: string | null): SessionState & {
     error: null,
     note: null,
     status: '',
+    kernel: EMPTY_KERNEL,
     mode: '',
     contextTokens: 0,
     contextWindowTokens: 0,
@@ -426,6 +452,44 @@ export function useSession(selectedId: string | null): SessionState & {
           patch({ error: String(event.message ?? '未知错误'), running: false })
           break
 
+        case 'review_stats': {
+          /* 内核统计：会话内累加 —— 用户关心的是"总共挡下了什么" */
+          const stats = event.stats
+          if (stats !== undefined) {
+            setState((prev) => ({
+              ...prev,
+              kernel: {
+                ...prev.kernel,
+                seen: true,
+                stats: {
+                  secrets: prev.kernel.stats.secrets + (stats.secrets ?? 0),
+                  pii: prev.kernel.stats.pii + (stats.pii ?? 0),
+                  encoded: prev.kernel.stats.encoded + (stats.encoded ?? 0),
+                  fragments: prev.kernel.stats.fragments + (stats.fragments ?? 0),
+                  chunked: prev.kernel.stats.chunked + (stats.chunked ?? 0),
+                  withheld: prev.kernel.stats.withheld + (stats.withheld ?? 0),
+                },
+              },
+            }))
+          }
+          break
+        }
+
+        case 'policy_decision': {
+          /* 判定记录：最新在前、只留 5 条 —— 这是"当下"，不是审计日志 */
+          const entry = {
+            tool: String(event.tool ?? ""),
+            decision: String(event.decision ?? ""),
+            reason: String(event.reason ?? ""),
+            message: String(event.message ?? ""),
+          }
+          setState((prev) => ({
+            ...prev,
+            kernel: { ...prev.kernel, decisions: [entry, ...prev.kernel.decisions].slice(0, 5) },
+          }))
+          break
+        }
+
         case 'notice':
           patch({ note: String(event.message ?? '') })
           break
@@ -465,6 +529,7 @@ export function useSession(selectedId: string | null): SessionState & {
       error: null,
       note: null,
       status: '',
+      kernel: EMPTY_KERNEL,
       mode: '',
       contextTokens: 0,
       contextWindowTokens: 0,

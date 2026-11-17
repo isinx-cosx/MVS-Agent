@@ -173,6 +173,11 @@ export interface HostEvent {
   tool?: string
   turn?: number
   step?: number
+  /** `policy_decision` 的判定结果：allow / deny / ask */
+  decision?: string
+  reason?: string
+  /** `review_stats` 的计数（类型在 useSession 里收窄，这里保持宽 */
+  stats?: Record<string, number>
 }
 
 type ServerFrame =

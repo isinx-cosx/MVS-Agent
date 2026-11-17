@@ -30,7 +30,7 @@ import { SettingsPage } from './Settings.tsx'
 import { resetSettings, updateSettings, useSettings } from './settings.ts'
 import { shortTime, useIndex } from './useIndex.ts'
 import { useJitter } from './useJitter.ts'
-import { useSession, type LiveBlock } from './useSession.ts'
+import { useSession, type KernelState, type LiveBlock } from './useSession.ts'
 
 /** 诊断读数只在 `?debug` 时出现 —— 平时不占地方，也不参与布局 */
 const DEBUG = new URLSearchParams(location.search).has('debug')
@@ -641,6 +641,78 @@ function LiveMessage({ live }: { live: LiveBlock }) {
  * 对不上的会话（工作区被关掉、目录被移走）不能丢 —— 单独归到"其他"，
  * 否则界面上会凭空少掉一些对话，而那是最难查的一类问题。
  */
+/**
+ * 「内核」面板：这一轮到底发生了什么。
+ *
+ * 后端一直在记这些东西（审核统计、策略判定），但界面上一条都没有 ——
+ * 用户看到"模型读了文件"，看不到"其中 3 处被扣留、1 个路径被打上了标记"。
+ *
+ * 这里只做**呈现**：不做任何判断，也不去读 `.mvs/` 里的状态文件。
+ * 判定永远在内核里，界面复制一份判定迟早会与内核不一致。
+ *
+ * 折叠是默认的：它是"需要时看一眼"的信息，不是每次都该占屏幕。
+ */
+function KernelPanel({ kernel }: { kernel: KernelState }) {
+  const [open, setOpen] = useState(false)
+  const rows: Array<{ key: string; label: string; value: number }> = [
+    { key: 'secrets', label: '密钥', value: kernel.stats.secrets },
+    { key: 'pii', label: '隐私', value: kernel.stats.pii },
+    { key: 'encoded', label: '编码', value: kernel.stats.encoded },
+    { key: 'fragments', label: '片段', value: kernel.stats.fragments },
+    { key: 'chunked', label: '分段', value: kernel.stats.chunked },
+    { key: 'withheld', label: '扣留', value: kernel.stats.withheld },
+  ]
+  const total = rows.reduce((sum, row) => sum + row.value, 0)
+
+  return (
+    <section className="side-section kernel">
+      <button
+        type="button"
+        className="changes-toggle"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <span className="chev" aria-hidden="true">
+          {open ? '▾' : '▸'}
+        </span>
+        <span>内核</span>
+        {/* 没有数据时**不要显示 0** —— "没发生"和"还没数据"是两件事 */}
+        <span className="count">{kernel.seen ? total : '—'}</span>
+      </button>
+
+      {open ? (
+        <div className="kernel-body">
+          {kernel.seen ? (
+            <div className="kernel-stats">
+              {rows.map((row) => (
+                <span key={row.key} className={row.value > 0 ? 'kernel-chip on' : 'kernel-chip'}>
+                  {row.label}
+                  <b>{row.value}</b>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="side-empty">本轮还没有审核记录</div>
+          )}
+
+          {kernel.decisions.length > 0 ? (
+            <ul className="kernel-list">
+              {kernel.decisions.map((item, index) => (
+                <li key={`${item.reason}-${index}`} className={item.decision === 'deny' ? 'kernel-row bad' : 'kernel-row'}>
+                  <span className="kernel-tool">{item.tool || '工具'}</span>
+                  <span className="kernel-reason" title={item.message}>
+                    {item.reason || item.decision}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 function Sidebar({
   workspaces,
   sessions,
@@ -654,6 +726,7 @@ function Sidebar({
   onLoadChanges,
   onRevert,
   reverting,
+  kernel,
   onAddWorkspace,
   onOpenSettings,
   onCreateSession,
@@ -680,6 +753,7 @@ function Sidebar({
   onLoadChanges: () => Promise<void>
   onRevert: (txnId: string) => void
   reverting: string | null
+  kernel: KernelState
   onAddWorkspace: () => void
   onOpenSettings: () => void
   /** 在指定工作区下新建对话 */
@@ -1056,6 +1130,8 @@ function Sidebar({
         reverting={reverting}
       />
 
+      <KernelPanel kernel={kernel} />
+
       <div className="side-foot">
         {error === null ? null : <div className="side-error">{error}</div>}
         {/*
@@ -1109,6 +1185,7 @@ export function App() {
     loadTransactions,
     revert,
     reverting,
+    kernel,
   } = useSession(selected)
 
   /* ── 生成速度：**最近 5 秒的平均** ─────────────────────────────────────
@@ -1825,6 +1902,7 @@ export function App() {
         onLoadChanges={loadTransactions}
         onRevert={(txnId) => void revert(txnId)}
         reverting={reverting}
+        kernel={kernel}
         onAddWorkspace={addWorkspace}
         onOpenSettings={() => setView('settings')}
         onCreateSession={createSession}

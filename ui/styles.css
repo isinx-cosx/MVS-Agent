@@ -2246,3 +2246,82 @@ button:disabled {
   font-size: var(--fs-2xs);
   word-break: break-all;
 }
+
+/* ── 内核面板 ───────────────────────────────────────────────────────────
+ * 复用侧栏已有的 `changes-toggle` / `count` / `side-empty` 形状，
+ * 只补三个自有类：统计芯片、判定行、整体容器。
+ * 不放图标 —— 这一版先用文字，等图标资源定下来再换。
+ */
+.kernel-body {
+  padding: 6px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kernel-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.kernel-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line, #2a2a2a);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--dim, #888);
+  white-space: nowrap;
+}
+
+/* 有命中的才亮起来：一片灰等于没有信息 */
+.kernel-chip.on {
+  color: var(--fg, #eee);
+  border-color: var(--warn, #c9a227);
+}
+
+.kernel-chip b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.kernel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kernel-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--dim, #888);
+  min-width: 0;
+}
+
+.kernel-row.bad .kernel-reason {
+  color: var(--danger, #e06c75);
+}
+
+.kernel-tool {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kernel-reason {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
