@@ -20,7 +20,6 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { tmpdir } from 'node:os'
 import process from 'node:process'
 
 const APP_PACKAGES_SID = 'S-1-15-2-1'
@@ -37,11 +36,15 @@ if (workspaces.length === 0) {
    * 授权项。
    *
    * `M` = 修改（读 + 写 + 删），`RX` = 读 + 执行。
-   * 工作区与临时目录给 `M`（工具要写），用户目录只给 `RX`（读得到、改不了）。
+   * 工作区给 `M`（工具要写），用户目录只给 `RX`（读得到、改不了）。
+   *
+   * **不再授权 `%TEMP%`**：AppContainer 会把 `TMP`/`TEMP` 重定向到它自己的私有目录
+   * （`…\Packages\<profile>\AC\Temp`），用户临时目录本来就用不上；而那条授权等于
+   * 把"只写工作区"扩大成"工作区 + 系统临时目录"，那里常被 AV 和备份排除。
+   * 实测：容器里的 `process.env.TEMP` 就是这个私有目录。
    */
   const targets: Array<{ path: string; rights: 'M' | 'RX' }> = [
     ...workspaces.map((item) => ({ path: item, rights: 'M' as const })),
-    { path: tmpdir(), rights: 'M' as const },
     ...(process.env.USERPROFILE === undefined
       ? []
       : [{ path: process.env.USERPROFILE, rights: 'RX' as const }]),

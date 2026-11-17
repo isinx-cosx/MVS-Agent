@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises'
 /**
  * 沙箱执行：把一条命令交给 `tools/sandbox-run.mjs`（受限令牌 + 低完整性 + Job 上限）。
  *
@@ -100,9 +101,26 @@ export async function runInSandbox(input: SandboxRunInput): Promise<SandboxRunOu
     ...input.args,
   ]
 
+  /*
+   * 把 TMP/TEMP 指到**工作区里**的临时目录。
+   *
+   * 之前是把整个 `%TEMP%` 授权给 AppContainer（`sandbox:grant` 里的 `tmpdir()`），
+   * 等于"只写工作区"这句话是假的 —— 系统临时目录也能写，而那里常被 AV 和备份排除。
+   *
+   * 改成：给子进程设 `TMP`/`TEMP` 指向 `<cwd>/.mvs/tmp`（工作区内的路径，本来就有授权），
+   * 于是写入范围回到"只有工作区"。命令显式写 `%TEMP%` 绝对路径仍然会被拒 —— 这是期望行为。
+   */
+  const scopedTemp = path.join(input.cwd, '.mvs', 'tmp')
+  try {
+    await mkdir(scopedTemp, { recursive: true })
+  } catch {
+    /* 建不出来就让子进程用自己的临时目录，不因此让命令失败 */
+  }
+  const env = { ...process.env, TMP: scopedTemp, TEMP: scopedTemp }
+
   const raw = await new Promise<string>((resolve, reject) => {
     /* ffmpeg 那条教训：stdio 必须 ignore 之外的那一路才拿得到输出，这里要 pipe */
-    const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env })
     let out = ''
     let err = ''
     child.stdout?.on('data', (chunk: Buffer) => {
