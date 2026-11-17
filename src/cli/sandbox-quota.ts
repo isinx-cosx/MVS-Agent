@@ -60,12 +60,27 @@ const command = [
 
 if (!apply) {
   process.stdout.write(
-    '\n要用**硬配额**（写超了由文件系统拒绝，而不是靠轮询发现）请用管理员终端执行：\n' +
-      `  ${command}\n` +
-      '\n回滚：\n' +
-      `  fsutil quota modify ${volume} 0 0 ${ownSid}\n` +
-      '\n不加配额时，当前的兜底是轮询 `WriteTransferCount`（10 ms 起步、2 秒后退避到 50 ms），' +
-      '超限杀整棵进程树。它是**事后**判定，突发写仍可能先落盘。\n',
+    [
+      '',
+      '要用**硬配额**（写超了由文件系统拒绝，而不是靠轮询发现），请在**管理员**终端里、',
+      '并先切到本仓库目录（npm 只有在有 package.json 的目录里才能跑）：',
+      '',
+      '  cd "<本仓库路径>"',
+      `  npm run sandbox:quota -- --apply`,
+      '',
+      '等价的手工命令：',
+      `  ${command}`,
+      '',
+      '若提示「配额未启用」，先开一次跟踪（同一个管理员窗口）：',
+      `  fsutil quota track ${volume}`,
+      '',
+      '回滚：',
+      `  fsutil quota modify ${volume} 0 0 ${ownSid}`,
+      '',
+      '不加配额时，当前的兜底是轮询 `WriteTransferCount`（10 ms 起步、2 秒后退避到 50 ms），',
+      '超限杀整棵进程树。它是**事后**判定，突发写仍可能先落盘。',
+      '',
+    ].join('\n'),
   )
   process.exitCode = 0
 } else if (!canQuery) {
