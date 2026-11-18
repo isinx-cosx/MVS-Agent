@@ -2356,44 +2356,16 @@ button:disabled {
   opacity: 0.9;
 }
 
-/* ── 空会话：图形标 + 会换的一句话 ─────────────────────────────────────── */
-.empty .mvs-symbol {
-  color: var(--fg, #eee);
-  opacity: 0.55;
-  margin-bottom: 2px;
-}
 
-.empty-tagline {
-  margin-top: 10px;
-  max-width: 34em;
-  text-align: center;
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: var(--dim, #888);
-  /* 换字时的淡入：key 变了会重新挂载，动画重放一次 */
-  animation: tagline-in 420ms ease-out;
-}
-
-@keyframes tagline-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/* 关了动效就别淡入 —— 尊重系统的"减少动态效果" */
-@media (prefers-reduced-motion: reduce) {
-  .empty-tagline {
-    animation: none;
-  }
-}
-
-/* ── 空状态：真正居中，并且一直留到用户发出第一条消息 ────────────────
- * 只在 #log[data-empty] 时改容器布局：平时不动，避免影响正常消息排版。
+/* ── 空状态：横排 + 纯黑图标 + 整体 2 倍 ─────────────────────────────────
+ *
+ * 图标 44→88，标语 12.5→25；图标在左、标语在右。
+ * 纯黑是刻意的（品牌标不跟主题走）；深色主题下单独兜底。
+ *
+ * ⚠️ 这几条以前被写坏过一次：追加时少了一个 `}`，压缩之后变成
+ *    `#log[data-empty=true] .empty .mvs-symbol #log[data-empty=true] .empty{...}`
+ *    —— 一条永远匹配不上的后代选择器，页面看起来"完全没改"。
+ *    所以现在每条规则都独立成块，写完先用括号计数自检。
  */
 #log[data-empty='true'] {
   display: flex;
@@ -2402,7 +2374,6 @@ button:disabled {
 }
 
 #log[data-empty='true'] .inner {
-  /* 让里面那块在可视高度里居中，而不是贴着顶部 */
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
@@ -2410,29 +2381,21 @@ button:disabled {
 }
 
 #log[data-empty='true'] .empty {
-  /* 居中容器里不需要 40vh 的撑高，靠父级居中即可 */
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
   min-height: 0;
-  padding-bottom: 0;
+  padding: 0 32px;
 }
 
-/* 简化后的空状态：只有图形标和一句话，间距靠容器给 */
-#log[data-empty='true'] .empty {
-  gap: 14px;
-}
-
-#log[data-empty='true'] .empty .mvs-symbol {
-  opacity: 0.5;
-
-/* ── 空状态：横排 + 纯黑图标 + 整体 2 倍 ───────────────────────────────
- * 图标 44→88，标语 12.5→25；图标在左、标语在右。
- * 纯黑是刻意的：品牌标不跟主题走 —— 所以下面同时给了深色主题的可见性兜底。
- */
-#log[data-empty='true'] .empty {
+/* 图形标 + 标语：这两个是横排的一行 */
+#log[data-empty='true'] .empty-row {
+  display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: center;
   gap: 32px;
-  padding: 0 32px;
 }
 
 #log[data-empty='true'] .empty .mvs-symbol {
@@ -2441,12 +2404,11 @@ button:disabled {
 }
 
 /* 深色主题下纯黑看不见 —— 只在那种情况换浅色 */
-:root[data-theme='dark'] #log[data-empty='true'] .empty .mvs-symbol,
-body[data-theme='dark'] #log[data-empty='true'] .empty .mvs-symbol {
+:root[data-theme='dark'] #log[data-empty='true'] .empty .mvs-symbol {
   color: #f2f2f2;
 }
 
-.empty-tagline {
+#log[data-empty='true'] .empty-tagline {
   margin-top: 0;
   max-width: 24em;
   text-align: left;
@@ -2456,13 +2418,1084 @@ body[data-theme='dark'] #log[data-empty='true'] .empty .mvs-symbol {
 
 /* 窄屏回竖排，否则两栏挤成一团 */
 @media (max-width: 720px) {
-  #log[data-empty='true'] .empty {
+  #log[data-empty='true'] .empty-row {
     flex-direction: column;
     gap: 20px;
   }
 
-  .empty-tagline {
+  #log[data-empty='true'] .empty-tagline {
     text-align: center;
     font-size: 20px;
   }
+}
+
+
+/* 空会话时输入框进了 #log 内部：不要再为底部悬浮块留白 */
+#log[data-empty='true'] {
+  padding-bottom: 24px;
+}
+
+/* 空状态里的输入框：宽度跟着标语走，别撑满整屏 */
+#log[data-empty='true'] #bottom {
+  width: min(760px, 100%);
+  position: static;
+  margin-top: 8px;
+  background: transparent;
+  backdrop-filter: none;
+  padding: 0;
+}
+
+/* 竖排时（窄屏）输入框跟着居中 */
+@media (max-width: 720px) {
+  #log[data-empty='true'] #bottom {
+    width: 100%;
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 视觉改版 v2 —— 「仪表」而不是「聊天」
+ *
+ * 参考的是 DSH / ChatGPT 的**克制**（中性色、发丝线、单色强调），
+ * 不抄它们的形状：
+ *
+ *   · 不抄大圆角对话气泡 —— 那是聊天应用的语法；这里的每一个回合
+ *     都带着"做了什么"（工具、改动），更像**操作记录**。
+ *   · 不抄纯白底 —— 纯白 + 细字在长时间盯着看的工具里刺眼，
+ *     用一点暖灰（paper）把对比降下来，深色模式则用带蓝的墨色。
+ *   · 不抄"一条条气泡"的分隔 —— 改成**左侧细轨**：每个回合有一根 2px
+ *     竖线，用户回合亮、助手回合淡。像仪器面板上的刻度，扫一眼就知道
+ *     这轮是谁在说话，而不用去辨认气泡颜色。
+ *   · 强调色只出现在**交互态**（焦点、当前项），不做装饰。
+ *
+ * 变量名全部沿用，所以这一块是纯覆盖，随时可以整段删掉回到旧观感。
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* 暖纸底 + 墨色文字：长时间阅读比纯白舒服，也不至于发黄 */
+  --bg: oklch(98.8% 0.004 95);
+  --user: oklch(96.5% 0.006 95);
+  --line: oklch(91% 0.005 95);
+  --fg: oklch(20% 0.008 265);
+  --dim: oklch(52% 0.008 265);
+  --think: oklch(58% 0.03 265);
+  --ring: oklch(58% 0.09 250);
+
+  /* 强调色：只用于焦点与当前项 */
+  --accent: oklch(55% 0.09 250);
+  --accent-soft: oklch(55% 0.09 250 / 10%);
+
+  /* 卡片更"硬"一点：6px 是仪表面板的感觉，不是聊天卡片 */
+  --radius: 8px;
+  --radius-sm: 5px;
+  --shadow-card: 0 1px 0 oklch(0% 0 0 / 4%);
+  --shadow-pop: 0 10px 30px oklch(0% 0 0 / 10%), 0 1px 2px oklch(0% 0 0 / 6%);
+
+  /* 正文行高：比聊天应用紧一档，工具输出占主导时更省纵向空间 */
+  --leading: 1.6;
+}
+
+:root[data-theme='dark'] {
+  --bg: oklch(17% 0.008 265);
+  --user: oklch(21% 0.01 265);
+  --line: oklch(28% 0.01 265);
+  --fg: oklch(93% 0.005 265);
+  --dim: oklch(66% 0.01 265);
+  --think: oklch(64% 0.03 265);
+  --ring: oklch(72% 0.09 250);
+  --accent: oklch(72% 0.09 250);
+  --accent-soft: oklch(72% 0.09 250 / 16%);
+}
+
+/* ── 排版 ────────────────────────────────────────────────────────────── */
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  line-height: var(--leading);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 数字统一等宽：指标、工具输出、计数不会随内容跳动 */
+.metrics,
+.tool-pre,
+.tool-summary,
+.side-item .count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 消息：左侧细轨，代替气泡 ────────────────────────────────────────── */
+
+.inner {
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.msg {
+  position: relative;
+  padding-left: 16px;
+}
+
+.msg::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+/* 用户回合：轨亮一档，扫一眼就知道谁在说话 */
+.msg.user::before {
+  background: var(--fg);
+  opacity: 0.55;
+}
+
+/* 用户消息不再用整块底色铺满，只留一点位移和字重 */
+.msg.user .body {
+  background: transparent;
+  padding-left: 0;
+  font-weight: 500;
+}
+
+/* ── 工具块：发丝线 + 无阴影 ─────────────────────────────────────────── */
+
+.tool-call {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  box-shadow: none;
+  transition: border-color 120ms ease;
+}
+
+.tool-call:hover {
+  border-color: oklch(from var(--line) calc(l - 6%) c h);
+}
+
+.tool-head {
+  padding: 6px 10px;
+}
+
+.tool-name {
+  font-family: var(--mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
+  font-size: var(--fs-xs);
+}
+
+.tool-body {
+  border-top: 1px solid var(--line);
+}
+
+/* ── 侧栏：更紧凑，当前项是"竖条 + 浅底"而不是整行高亮 ─────────────── */
+
+.side-item {
+  border-radius: var(--radius-sm);
+  transition: background-color 120ms ease;
+}
+
+.side-item.active {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.side-item:hover:not(.active) {
+  background: var(--user);
+}
+
+#sidebar .side-brand {
+  padding: 14px 14px 10px;
+  letter-spacing: 0.3px;
+}
+
+/* 分组标题：小一号、拉开字距，像面板上的分区标签 */
+#sidebar h2 {
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* ── 输入框：唯一带阴影的东西（它是浮起来的）────────────────────────── */
+
+/* 卡片只到输入行（`.row`）为止 —— 之前这条挂在 form 上，导致整个底部是一大块白 */
+#composer > .inner > .row {
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: var(--shadow-pop);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+
+#composer > .inner > .row:focus-within {
+  box-shadow: var(--shadow-pop), 0 0 0 3px var(--accent-soft);
+}
+
+#composer textarea {
+  line-height: 1.55;
+}
+
+/* ── 交互态：键盘用户看得见自己在哪 ─────────────────────────────────── */
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* 滚动条：细一点，别在浅底上拉出一条黑边 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--dim);
+  background-clip: content-box;
+}
+
+/* 关了动效就别做过渡 */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
+
+
+/* ── 只让**输入框**是卡片，别的都不画 ─────────────────────────────────
+ *
+ * 之前 `#composer > .inner` 是一整块带边框+阴影的白卡片，把模式和模型
+ * 两个下拉也包在里面，视觉上就是"屏幕下方一大块白"。现在：
+ *
+ *   · 那张卡片只到输入行为止（`.row`）
+ *   · 模式和模型移到卡片**外面**，贴在它下面，无边框无底色
+ */
+#composer > .inner {
+  max-width: 860px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#composer > .inner > .row {
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: var(--shadow-pop);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+#composer > .inner > .row:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-pop), 0 0 0 3px var(--accent-soft);
+}
+
+/* 下拉那一行在卡片外面：不要边框、不要底色、不要阴影 */
+#composer > .inner > .mode-row {
+  padding: 6px 4px 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+/* 底部那条整宽的底衬去掉 —— 它让整个下沿看起来又是一块白 */
+#bottom {
+  background: transparent;
+  backdrop-filter: none;
+}
+
+
+/* ── 底部输入区：重写成"一根输入框 + 下面两行小字" ─────────────────────
+ *
+ * 之前的问题：`#bottom` 自带一层整宽渐变（`linear-gradient(to top, var(--bg) 60%, …)`），
+ * 再叠上 `#composer > .inner` 那张 960px 的白卡片 —— 视觉上就是"屏幕下方一大块白"，
+ * 而且卡片宽度和渐变宽度不一致，右边会露出参差的边。
+ *
+ * 现在的结构很直白：
+ *
+ *   #bottom            透明，只负责贴底和留白
+ *   └ #composer        居中一列，宽度 min(820px, 100%)
+ *      ├ .row          唯一的卡片：输入框 + 发送键
+ *      ├ .mode-row     紧贴在卡片下面，无边框无底色
+ *      └ .metrics      再下面一行小字
+ */
+#bottom {
+  background: none;
+  padding: 12px 16px 14px;
+}
+
+#composer {
+  width: min(820px, 100%);
+  margin: 0 auto;
+}
+
+#composer > .inner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+#composer > .inner > .row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: var(--shadow-pop);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+#composer > .inner > .row:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-pop), 0 0 0 3px var(--accent-soft);
+}
+
+/* 下拉与指标行：都在卡片外面，只是普通文字 */
+#composer > .inner > .mode-row {
+  padding: 0 4px;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+#composer .metrics {
+  justify-content: center;
+  gap: 6px;
+  color: var(--dim);
+  font-size: var(--fs-2xs);
+}
+
+
+/* ── 卡片改回"包住输入行 + 两个下拉" ────────────────────────────────────
+ *
+ * 上一版把卡片只画到输入行为止，下拉跑到卡片外面 —— 结果是"输入框一张卡、
+ * 设置漂在下面"，看起来像两个不相干的东西。
+ *
+ * 现在的边界：
+ *
+ *   .inner       一张卡：输入行 + 权限/模型两个下拉
+ *   .row         卡内的第一行，自己不再画边框/阴影
+ *   .mode-row    卡内的第二行
+ *   .metrics     卡外的小字（它是"读"的信息，不是输入的一部分）
+ */
+#composer > .inner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  box-shadow: var(--shadow-pop);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+#composer > .inner:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-pop), 0 0 0 3px var(--accent-soft);
+}
+
+/* 卡内第一行：不要自己的边框/底色/阴影，否则会叠成"卡中卡" */
+#composer > .inner > .row {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/* 卡内第二行：两个下拉 */
+#composer > .inner > .mode-row {
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+
+/* ── 配色改回 DSH 那套纯中性（不要暖纸底）─────────────────────────────
+ *
+ * 上一版给浅色底加了一点暖灰（`oklch(98.8% .004 95)`），理由是"长时间看舒服"。
+ * 但和 DSH 并排看就是两套色系：那边是纯白 + 纯中性灰，这边发黄。
+ * 一致性比个人偏好重要 —— 换回 shadcn/DSH 的那组值。
+ *
+ * 只改色值，不动任何布局与字号。
+ */
+:root {
+  --bg: oklch(100% 0 0);
+  --user: oklch(97% 0 0);
+  --line: oklch(92.2% 0 0);
+  --fg: oklch(14.5% 0 0);
+  --dim: oklch(55.6% 0 0);
+  --think: oklch(62% 0 0);
+  --ring: oklch(70.8% 0 0);
+
+  /* 强调色也收成中性偏冷的灰蓝，避免在白底上显得是另一个品牌色 */
+  --accent: oklch(56% 0.02 250);
+  --accent-soft: oklch(56% 0.02 250 / 9%);
+}
+
+:root[data-theme='dark'] {
+  --bg: oklch(15.5% 0 0);
+  --user: oklch(21% 0 0);
+  --line: oklch(28% 0 0);
+  --fg: oklch(94% 0 0);
+  --dim: oklch(66% 0 0);
+  --think: oklch(64% 0 0);
+  --ring: oklch(72% 0 0);
+  --accent: oklch(78% 0.02 250);
+  --accent-soft: oklch(78% 0.02 250 / 16%);
+}
+
+
+/* ── 聚焦时不要再"套一个框" ────────────────────────────────────────────
+ *
+ * 之前有两层同时在动：
+ *   1. 卡片：`box-shadow: … 0 0 0 3px accent-soft`（3px 柔光环）
+ *   2. 全局 `:focus-visible { outline: 2px solid }` —— 连 textarea 也吃到了
+ * 两层叠在一起，点进输入框就像外面又套了一个方框。
+ *
+ * 现在只留一层**最轻**的指示：卡片描边换成强调色。没有光环、没有 outline。
+ * 键盘可达性由下方的 `:focus-visible` 兜底（输入框单独豁免，因为它的焦点态
+ * 已经由整张卡片的描边表达了）。
+ */
+#composer > .inner:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-pop);
+}
+
+/* 输入框自身不画焦点框 —— 焦点态由外面那张卡片表达 */
+#composer textarea:focus,
+#composer textarea:focus-visible {
+  outline: none;
+  border: none;
+  box-shadow: none;
+}
+
+/* 发送按钮仍保留键盘焦点框（它是独立控件） */
+#composer button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+
+/* ── 去掉输入区外面那条灰框 ────────────────────────────────────────────
+ *
+ * 那条 1px 的灰边是 `#composer > .inner` 的 `border`。既然卡片里已经包着
+ * 输入行和两个下拉，"再加一圈边"就只是多一条线 —— 用户看到的就是"外面套了个框"。
+ *
+ * 现在卡片只靠**白底 + 投影**立起来，不再画边。
+ * 焦点态也不再变色（没有边可染），靠光标位置表达焦点。
+ */
+#composer > .inner {
+  border: none;
+  box-shadow: 0 6px 20px oklch(0% 0 0 / 7%);
+}
+
+#composer > .inner:focus-within {
+  border: none;
+  box-shadow: 0 6px 20px oklch(0% 0 0 / 7%);
+}
+
+
+/* ── 点进去**不要**出现任何外框 ────────────────────────────────────────
+ *
+ * 之前那次只清了 `.inner` 的，漏了 `.row:focus-within` —— 它的
+ * `0 0 0 3px accent-soft` 是个 3px 实心环，点进去就出现，看上去就是"套了个框"。
+ * （伪类比普通规则多一层，所以它一直赢。）
+ *
+ * 现在把输入区里所有 focus 态一次性抹平：没有描边、没有光环、没有 outline。
+ * 焦点仍然存在（光标在闪），只是不画东西。
+ */
+#composer > .inner:focus-within,
+#composer > .inner:focus,
+#composer > .inner > .row:focus-within,
+#composer > .inner > .row:focus,
+#composer > .inner > .mode-row:focus-within,
+#composer > .inner > .mode-row:focus {
+  border: none;
+  outline: none;
+  box-shadow: 0 6px 20px oklch(0% 0 0 / 7%);
+}
+
+/* 输入框本身也不画 */
+#composer textarea:focus,
+#composer textarea:focus-visible {
+  outline: none !important;
+  border: none;
+  box-shadow: none;
+}
+
+
+/* ── 修正：焦点时不要给**内层**加阴影 ──────────────────────────────────
+ *
+ * 上一条把 `box-shadow: 0 6px 20px` 写在了一组并列选择器里，其中包含
+ * `.row:focus-within` —— 于是点进输入框时，**里面那一行**也获得了一层阴影，
+ * 看起来像"又浮起来一层"。
+ *
+ * 正确的分工：
+ *   · `.inner`（整张卡）：始终一层投影，焦点前后完全一样
+ *   · `.row` / `.mode-row`（卡内两行）：任何状态下都**没有**阴影
+ */
+#composer > .inner,
+#composer > .inner:focus,
+#composer > .inner:focus-within {
+  border: none;
+  outline: none;
+  box-shadow: 0 6px 20px oklch(0% 0 0 / 7%);
+}
+
+#composer > .inner > .row,
+#composer > .inner > .row:focus,
+#composer > .inner > .row:focus-within,
+#composer > .inner > .mode-row,
+#composer > .inner > .mode-row:focus,
+#composer > .inner > .mode-row:focus-within {
+  border: none;
+  outline: none;
+  box-shadow: none;
+}
+
+
+/* ── 用户消息改成气泡（去掉左侧细轨）───────────────────────────────────
+ *
+ * 上一版用 2px 竖轨区分"谁在说话"，理由是"这是操作记录不是聊天"。
+ * 实际看下来，竖轨的信息量太低：它只说明"这轮有内容"，不说明是谁，
+ * 而用户最想一眼认出的是**自己说的话**。
+ *
+ * 所以用户回合改成气泡（靠右、浅底、圆角一侧收窄），助手回合留白排。
+ * 气泡是聊天界面里最省认知的形状，这里没必要反着来。
+ */
+.msg::before {
+  display: none;
+}
+
+.msg.user {
+  display: flex;
+  justify-content: flex-end;
+  padding-left: 0;
+  margin: 14px 0 18px;
+}
+
+.msg.user .body {
+  max-width: min(620px, 82%);
+  padding: 10px 14px;
+  border-radius: 16px 16px 4px 16px;
+  background: var(--user);
+  color: var(--fg);
+  font-weight: 400;
+  /* 气泡里换行要真的换行，而不是被 flex 压扁 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 助手回合：不要缩进，和气泡左边缘对齐 */
+.msg:not(.user) {
+  padding-left: 0;
+}
+
+
+/* ── 对话顶部栏 ────────────────────────────────────────────────────────
+ *
+ * 结构上它只是 `#main` 的第一个子元素：`#main` 已经是 `flex-direction: column`，
+ * 所以它占固定高度、`#log` 拿剩下的（`flex:1; min-height:0; overflow:auto`）。
+ * 也就是说"内容不会越过顶部栏"是**布局保证**，不是靠遮罩挡出来的。
+ */
+.chat-top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  z-index: 2;
+}
+
+.chat-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-stat {
+  flex: 0 0 auto;
+  font-size: var(--fs-2xs);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* 可点的那一个：没有后台任务时是灰的、点不动 */
+.chat-stat.as-button {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  cursor: default;
+  font: inherit;
+  font-size: var(--fs-2xs);
+}
+
+.chat-stat.as-button.on {
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.chat-stat.as-button.on:hover {
+  background: var(--user);
+}
+
+/* 展开的后台任务列表：贴在这一行的下面，别把高度撑到顶部栏里 */
+.chat-jobs {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 6px 22px 8px;
+  list-style: none;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 8px 16px oklch(0% 0 0 / 6%);
+  font-size: var(--fs-2xs);
+  color: var(--dim);
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.chat-jobs li {
+  padding: 3px 0;
+  font-family: var(--mono, ui-monospace, Consolas, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 列表绝对定位，父级要能定位 */
+.chat-top {
+  position: relative;
+}
+
+
+/* ── 底部输入区改成**流内**元素：内容不再钻到它下面 ────────────────────
+ *
+ * 之前 `#bottom` 是 `position: absolute`，浮在 `#log` 上面；`#log` 用
+ * `padding-bottom: calc(var(--composer-h) + 12px)` 给最后一条消息留出空间。
+ *
+ * 后果：内容仍然会**滚到输入框底下**（补的是"底部空白"，不是"裁剪边界"），
+ * 半透明的边缘和输入框之间的缝隙里就能看到半截字 —— 看起来就是"被压住了"。
+ *
+ * 现在把它放回正常流：
+ *
+ *   #main (flex column)
+ *   ├ .chat-top   固定高度
+ *   ├ #log        flex:1 + overflow:auto  ← 它的下边界就是输入框的上边界
+ *   └ #bottom     自动高度                ← 永远在 #log 下面，不重叠
+ *
+ * 于是"输入框以下不渲染"是**布局**的结果：滚动容器的盒子的底边就停在那儿。
+ */
+#bottom {
+  position: static;
+  flex: 0 0 auto;
+  background: none;
+  pointer-events: auto;
+}
+
+/* 不再需要为悬浮块留白 —— 滚动区自己在输入框上方结束 */
+#log {
+  padding-bottom: 10px;
+}
+
+
+/* ── 内容列与输入框同宽 ────────────────────────────────────────────────
+ *
+ * 实测不一致的来源：`#log > .inner { max-width: 960px }`（ID + 类，特异性高），
+ * 而输入框是 `min(820px, 100%)` —— 差 140px，右边看着就错位。
+ *
+ * 现在两边读同一个变量 `--col`，以后只改一处。
+ */
+:root {
+  --col: 820px;
+}
+
+#log > .inner {
+  max-width: var(--col);
+  margin: 0 auto;
+}
+
+#composer {
+  width: min(var(--col), 100%);
+  margin: 0 auto;
+}
+
+
+/* ── 工具调用：一行横条，点击展开 ──────────────────────────────────────
+ *
+ * 之前它是一个带边框的"卡片"：每一次工具调用都占一块视觉面积，
+ * 十几次调用就把整段对话切成一格一格。而那些信息里 90% 的时间用户只需要
+ * "它调了什么、成没成功"一行字。
+ *
+ * 现在是**贴边的一行**：没有边框、没有底色，hover 才浮出一点浅底；
+ * 点一下展开参数与输出。展开部也不再画分隔线，靠缩进表示从属。
+ */
+.tool-call {
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  margin: 2px 0;
+}
+
+.tool-call .tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--dim);
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+
+.tool-call .tool-head:hover {
+  background: var(--user);
+}
+
+/* 箭头：收起朝右，展开朝下 */
+.tool-call .tool-head .chev {
+  flex: 0 0 auto;
+  opacity: 0.7;
+  transition: transform 120ms ease;
+}
+
+.tool-call .tool-head[aria-expanded='true'] .chev {
+  transform: rotate(90deg);
+}
+
+.tool-call .tool-name {
+  flex: 0 0 auto;
+  color: var(--fg);
+  font-family: var(--mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
+  font-size: var(--fs-xs);
+}
+
+/* 摘要吃掉剩余宽度，过长省略 —— 一行永远是一行 */
+.tool-call .tool-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-call.waiting .tool-summary {
+  color: var(--think);
+}
+
+/* 展开区：缩进对齐到名字下面，不再画上边框 */
+.tool-call .tool-body {
+  border-top: none;
+  padding: 2px 8px 6px 30px;
+}
+
+.tool-call .tool-pre {
+  margin: 4px 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--user);
+  font-size: var(--fs-2xs);
+  line-height: 1.55;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.tool-call .tool-empty {
+  padding: 4px 0;
+  color: var(--dim);
+  font-size: var(--fs-2xs);
+}
+
+
+/* ── 执行过程：跑的时候全展开，跑完收成一行 ────────────────────────────
+ *
+ * 一行摘要：`已思考并执行命令 · 12.3 秒 · 4 次工具调用`
+ * 被打断时是"已打断"，不是"已完成" —— 两者含义完全不同。
+ */
+.process {
+  margin: 6px 0 10px;
+}
+
+.process-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--dim);
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 正在跑时它是不可点的（永远展开），所以要显式关掉指针样式 */
+.process-head:disabled {
+  cursor: default;
+}
+
+.process-head:hover:not(:disabled) {
+  background: var(--user);
+}
+
+.process-head .chev {
+  flex: 0 0 auto;
+  opacity: 0.7;
+  transition: transform 120ms ease;
+}
+
+.process-head[aria-expanded='true'] .chev {
+  transform: rotate(90deg);
+}
+
+.process-label {
+  flex: 0 0 auto;
+  color: var(--fg);
+}
+
+.process-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 展开体：比正文再缩进半格，表示它是"过程"而不是结论 */
+.process-body {
+  padding-left: 26px;
+  border-left: 1px solid var(--line);
+  margin-left: 12px;
+}
+
+
+/* 一轮的整体间距：轮与轮之间留白，轮内各块紧一点 */
+.turn {
+  margin-bottom: 18px;
+}
+
+.turn > .msg.user {
+  margin-top: 0;
+}
+
+
+/* 过程里的每一步：思考与调用按顺序排，步骤之间用一点留白分开 */
+.process-step {
+  padding: 2px 0;
+}
+
+.process-step + .process-step {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+
+
+/* 顶部栏里的审核统计：只在有命中时出现 */
+.chat-stat.reviewed {
+  color: var(--fg);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--user);
+}
+
+
+/* ── 输入框里的字别那么黑 ──────────────────────────────────────────────
+ *
+ * `#input` 用的是 `color: inherit`，而它继承到的是 `--fg`（`oklch(14.5% 0 0)`，
+ * 近似纯黑）。在白色卡片上，输入后那几个字比周围所有文字都重 ——
+ * 看起来像"打字之后颜色变了"。
+ *
+ * 现在输入文字统一用一档更柔和的值（`oklch(28%)`），占位符用 `--dim`，
+ * 两者都在浅色 / 深色主题下各自成立；光标用强调色，落点一眼可见。
+ */
+#composer textarea,
+#composer textarea:focus,
+#composer textarea:focus-visible {
+  color: oklch(28% 0 0);
+  caret-color: var(--accent);
+}
+
+#composer textarea::placeholder {
+  color: var(--dim);
+  opacity: 1;
+}
+
+:root[data-theme='dark'] #composer textarea,
+:root[data-theme='dark'] #composer textarea:focus,
+:root[data-theme='dark'] #composer textarea:focus-visible {
+  color: oklch(88% 0 0);
+}
+
+
+/* ── 回答的"复制"按钮 ────────────────────────────────────────────────
+ *
+ * 平时只显示一个小字，不占视觉重量；hover 回答区才明显起来。
+ * 位置固定在回答右上角（`position: absolute`），不参与正文排版 ——
+ * 否则它会把第一段文字的宽度挤窄。
+ */
+.reply {
+  position: relative;
+}
+
+.copy-answer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--dim);
+  font: inherit;
+  font-size: var(--fs-2xs);
+  line-height: 1.6;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.reply:hover .copy-answer {
+  opacity: 1;
+}
+
+.copy-answer:hover {
+  background: var(--user);
+  color: var(--fg);
+}
+
+.copy-answer:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+
+/* ── 复制按钮：回答左下角的图标 ──────────────────────────────────────
+ *
+ * 之前放在右上角、带文字。问题是右上角正是正文第一行最容易被读到的位置，
+ * 一个悬空的"复制"标签会跟标题抢注意力；而且它是**这一整段回答**的动作，
+ * 归属应该落在回答的末尾。
+ *
+ * 现在是左下角的一枚图标：没有文字、平时淡、hover 才实。
+ */
+.reply {
+  position: relative;
+}
+
+.copy-answer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 2px 0 0 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--dim);
+  opacity: 0.5;
+  cursor: pointer;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.reply:hover .copy-answer {
+  opacity: 0.9;
+}
+
+.copy-answer:hover {
+  opacity: 1;
+  background: var(--user);
+  color: var(--fg);
+}
+
+.copy-answer.ok {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.copy-answer.fail {
+  opacity: 1;
+  color: var(--err);
+}
+
+.copy-answer:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+
+/* ── 修正：把上一条遗留的 `position: absolute` 清掉 ────────────────────
+ *
+ * 上一版只改了 display / margin，没重置 **position / top / right** ——
+ * 于是老规则里的 `position:absolute; top:0; right:0` 继续生效，
+ * 按钮还挂在右上角。这次显式归位。
+ */
+.reply {
+  position: static;
+}
+
+.copy-answer {
+  position: static;
+  top: auto;
+  right: auto;
+  left: auto;
+  bottom: auto;
 }

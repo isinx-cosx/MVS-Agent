@@ -1775,19 +1775,32 @@ export class Session {
     /*
      * 记 taint：模型看到的是打码版（或整份被扣），**不是原文**。
      * 那就不该按"原文"去改它 —— 否则打码串会被写回文件，真值永久丢失。
+     *
+     * ⚠️ **提示语必须跟着事实走。** 这里原来有三重条件（taint 注入 / 有路径 /
+     * 是 read_file），而下面的提示语是无条件的 —— 于是 grep 来源、编码/分段判据、
+     * 没有注入 taint 这三种情况都会说"已记入 taint，改动会被拒绝"，其实没记。
+     * 一句没兑现的承诺，比不写更糟：模型会据此以为自己撞了墙而停下。
      */
-    if (this.#deps.taint !== undefined && relPath !== undefined && tool === 'read_file') {
+    let taintClaim = ''
+    if (relPath !== undefined) {
       const hit = scanned.hits[0] ?? pii.hits[0]
       /* PII 命中时 scanned.hits 是空的 —— 直接取 [0].category 会抛（实测：error 事件） */
-      if (hit !== undefined) await this.#deps.taint.add(relPath, hit.category, '读取时命中敏感内容')
+      const category = hit?.category ?? 'masked-output'
+      const reason = hit === undefined ? '输出被打码（编码 / 分段判据）' : '读取时命中敏感内容'
+      if (this.#deps.taint !== undefined && tool === 'read_file') {
+        await this.#deps.taint.add(relPath, category, reason)
+        taintClaim = `（来源：${relPath}，该路径已记入 taint，改动会被拒绝）`
+      } else {
+        /* grep 等工具：来源路径记不了 taint（那是目录/通配，不是具体文件），如实说 */
+        taintClaim = `（来源：${relPath}；这一条没有记入 taint，改动不受此条保护）`
+      }
     }
 
     const parts: string[] = []
     if (scanned.hits.length > 0) parts.push(`密钥类 ${describeHits(scanned.hits)}`)
     if (pii.hits.length > 0) parts.push(`私密内容 ${describePii(pii.hits)}`)
     const note =
-      `〔输出审核：${parts.join('；')} 已打码〕` +
-      (relPath === undefined ? '' : `（来源：${relPath}，该路径已记入 taint，改动会被拒绝）`)
+      `〔输出审核：${parts.length === 0 ? '编码 / 分段判据' : parts.join('；')} 已打码〕` + taintClaim
 
     return {
       ...result,

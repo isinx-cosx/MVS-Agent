@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 /**
  * 一次性授权：让断网沙箱**能读任何地方、只能写工作区**。
  *
@@ -61,8 +63,53 @@ if (workspaces.length === 0) {
    * 把"只写工作区"扩大成"工作区 + 系统临时目录"，那里常被 AV 和备份排除。
    * 实测：容器里的 `process.env.TEMP` 就是这个私有目录。
    */
-  const targets: Array<{ path: string; rights: 'M' | 'RX' }> = [
+  /*
+   * 顺带授权 **node 的安装目录**（只读 + 可执行）。
+   *
+   * 为什么需要：容器里 `cmd /c node --version` 会报"不是内部或外部命令" ——
+   * PATH 没丢，是容器**不能枚举**没有 ACE 的目录（`C:\Program Files\nodejs`），
+   * 于是 cmd 在里面搜不到 node.exe。给 RX 之后 PATH 查找才成立。
+   * 只给 RX，不给写。
+   */
+  /*
+   * **祖先链只给"穿过"（X）。**
+   *
+   * 文件读得到但目录列不出来，根因是枚举要沿父目录逐层做 traverse 检查，
+   * 而 Desktop / 上级目录都没给容器 SID 任何权限 —— 文件自身有 ACE 所以能读，
+   * 枚举在某一层就被拒了。`node` 也一样：`C:\Program Files\nodejs` 给了 RX，
+   * 但祖先链不通，cmd 找不到 node.exe。
+   *
+   * 只授 X（traverse），不授 R（列目录内容）：能从外面穿过去，但看不到别的文件。
+   */
+  function ancestorTraverse(target: string): string[] {
+    const chain: string[] = []
+    let current = path.dirname(path.resolve(target))
+    while (true) {
+      const parent = path.dirname(current)
+      if (parent === current) { chain.push(current); break }   /* 盘根也要给穿过权限：node 会 lstat 'C:\' */
+      chain.push(current)
+      current = parent
+    }
+    return chain
+  }
+
+  const nodeDir = path.dirname(process.execPath)
+  const npmDir = process.env.APPDATA === undefined ? null : path.join(process.env.APPDATA, 'npm')
+  /* npm 的缓存与全局目录：npm 启动时会 lstat 它们，不给就看都不让看 */
+  const npmCacheDir = process.env.LOCALAPPDATA === undefined ? null : path.join(process.env.LOCALAPPDATA, 'npm-cache')
+  const targets: Array<{ path: string; rights: 'M' | 'RX' | 'X' | 'R' }> = [
     ...workspaces.map((item) => ({ path: item, rights: 'M' as const })),
+    { path: nodeDir, rights: 'RX' as const },
+    /* 祖先链：只授穿过权限，让枚举与 PATH 查找能到达工作区 */
+    ...workspaces.flatMap((item) => ancestorTraverse(item).map((p) => ({ path: p, rights: 'X' as const }))),
+    /*
+     * node 的祖先链也要穿过权限：只给 `C:\Program Files\nodejs` 的 RX 不够 ——
+     * 父目录 `C:\Program Files` 对容器完全不可见时，连 `if exist node.exe` 都返回 no。
+     * 改这一层需要管理员，所以这里只是把它列进目标，由 `npm run sandbox:grant` 执行。
+     */
+    ...ancestorTraverse(path.dirname(process.execPath)).map((p) => ({ path: p, rights: 'X' as const })),
+    ...(npmDir !== null && existsSync(npmDir) ? [{ path: npmDir, rights: 'RX' as const }] : []),
+    ...(npmCacheDir !== null && existsSync(npmCacheDir) ? [{ path: npmCacheDir, rights: 'RX' as const }] : []),
     ...(process.env.USERPROFILE === undefined
       ? []
       : [{ path: process.env.USERPROFILE, rights: 'RX' as const }]),
@@ -70,7 +117,9 @@ if (workspaces.length === 0) {
 
   let failed = 0
   for (const target of targets) {
-    const spec = `*${APP_PACKAGES_SID_EFFECTIVE}:${remove ? '' : `(OI)(CI)${target.rights}`}`
+    const spec = target.rights === 'X'
+      ? `*${APP_PACKAGES_SID_EFFECTIVE}:(${target.rights})`
+      : `*${APP_PACKAGES_SID_EFFECTIVE}:(OI)(CI)${target.rights}`
     const args = remove
       ? [target.path, '/remove', `*${APP_PACKAGES_SID_EFFECTIVE}`]
       : [target.path, '/grant', spec]

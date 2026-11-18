@@ -198,8 +198,16 @@ const OWN_SID = (() => {
 if (withAppContainer) {
   const add = (target, rights) => {
     /* 优先授权给自己 profile 的 SID（只有我们的沙箱认）；查不到才退回 ALL APP PACKAGES */
-    const spec = rights === 'M' ? '*' + OWN_SID + ':(M)' : '*' + OWN_SID + ':(OI)(CI)' + rights
-    const probe = spawnSync('icacls', [target, '/grant', spec], {
+    /*
+     * 目录要**两条**：`(M)` 作用于这个对象本身，`(OI)(CI)(M)` 给子项继承。
+     *
+     * 只加不带继承的那条时，实测 `type` 能读、`icacls` 能取安全描述符，
+     * 但 `dir` 被拒 —— 枚举这一项在不同对象上的落点不一致。两条一起给才稳定。
+     */
+    const specs = rights === 'M'
+      ? ['*' + OWN_SID + ':(M)', '*' + OWN_SID + ':(OI)(CI)(M)']
+      : ['*' + OWN_SID + ':(OI)(CI)' + rights]
+    const probe = spawnSync('icacls', [target, '/grant', ...specs], {
       windowsHide: true,
       timeout: 15000,
     })
@@ -215,14 +223,18 @@ const grantedStatus = grants.length === 0
     ? 'ok(' + grants.length + ')'
     : 'failed(' + grants.filter((item) => !item.ok).map((item) => item.target).join(',') + ')'
 
+const appContainerInfo = { profile: 'skipped', derive: 'skipped', sid: 'skipped' }
 let attributes = null
 let attributeApplied = 'skipped'
 if (withAppContainer) {
   const profileName = 'MVS.Agent.Sandbox'
   const sidOut = [null]
-  CreateAppContainerProfile(profileName, profileName, 'MVS sandbox', null, 0, sidOut)
+  const profileResult = CreateAppContainerProfile(profileName, profileName, 'MVS sandbox', null, 0, sidOut)
   /* profile 已存在时返回 183 且不写 SID —— 必须补一次 derive */
-  if (sidOut[0] === null) DeriveAppContainerSidFromAppContainerName(profileName, sidOut)
+  const deriveResult = sidOut[0] === null ? DeriveAppContainerSidFromAppContainerName(profileName, sidOut) : 'skipped'
+  appContainerInfo.profile = String(profileResult)
+  appContainerInfo.derive = String(deriveResult)
+  appContainerInfo.sid = sidOut[0] === null ? 'null' : 'present'
 
   const sizeOut = [0]
   InitializeProcThreadAttributeList(null, 2, 0, sizeOut)
@@ -275,7 +287,16 @@ if (attributes !== null) {
       : `failed(${GetLastError()})`
 }
 
-const line = [command, ...commandArgs].map((item) => Q + item + Q).join(' ')
+/*
+ * 只给**需要引号的**参数加引号（含空格 / 引号 / 空串）。
+ *
+ * 原来无差别给每个参数套一对双引号，于是 cmd 收到的是
+ *   "cmd.exe" "/d" "/s" "/c" "echo hi"
+ * cmd 对 /c 后面的引号有自己的剥离规则，被这两对多余的引号搞坏 ——
+ * 实测报'"echo hi' 不是内部或外部命令（ERROR_FILE_NOT_FOUND 的近似症状）。
+ */
+const quoteIfNeeded = (item) => (/[\s"]/.test(item) ? Q + item + Q : item)
+const line = [command, ...commandArgs].map(quoteIfNeeded).join(' ')
 const lineBuffer = Buffer.concat([Buffer.from(line, 'utf16le'), Buffer.from([0, 0])])
 
 const startup = {
@@ -310,6 +331,9 @@ const report = {
   granted: grantedStatus,
   handles: handlesListed,
   attribute: attributeApplied,
+  appcontainerProfile: appContainerInfo.profile,
+  appcontainerDerive: appContainerInfo.derive,
+  appcontainerSid: appContainerInfo.sid,
 }
 
 /*

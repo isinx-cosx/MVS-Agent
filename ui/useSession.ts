@@ -99,6 +99,8 @@ export interface SessionState {
   error: string | null
   note: string | null
   status: string
+  /** 上一轮从开始到结束用了多久（毫秒）。`null` = 还没有完整的一轮 */
+  lastTurnElapsedMs: number | null
   /** 「内核这一轮做了什么」：审核统计 + 最近判定（见 KernelState） */
   kernel: KernelState
   /** 当前会话的权限模式（投影是真相）。空串表示还没读到 */
@@ -190,7 +192,16 @@ async function pickDefaultSession(): Promise<{ sessionId: string | null; note: s
   return { sessionId: null, note: null }
 }
 
-export function useSession(selectedId: string | null): SessionState & {
+export function useSession(
+  selectedId: string | null,
+  /**
+   * `draft: true` = 用户主动点了「新会话」，界面要停在**空状态**等第一条消息。
+   *
+   * 没有这个标志的话，`selectedId === null` 会被当成"还没选过"，于是自动挑
+   * 最近的一条对话 —— 表现就是"点新建却跳进了旁边的对话"。
+   */
+  options?: { draft?: boolean },
+): SessionState & {
   send: (text: string, workspace?: string) => Promise<string | null>
   stop: () => Promise<void>
   /** 人确认那次结果未知的工具调用，解除阻断（那道门的开关） */
@@ -256,6 +267,7 @@ export function useSession(selectedId: string | null): SessionState & {
     error: null,
     note: null,
     status: '',
+    lastTurnElapsedMs: null,
     kernel: EMPTY_KERNEL,
     mode: '',
     contextTokens: 0,
@@ -266,6 +278,8 @@ export function useSession(selectedId: string | null): SessionState & {
   })
 
   /* 会话 id 在回调里要用，但它不该触发重订阅，所以放 ref */
+  /** 本轮开始时间。`null` = 没有正在跑的一轮 */
+  const turnStartedAt = useRef<number | null>(null)
   const sessionRef = useRef<string | null>(null)
 
   /**
@@ -424,6 +438,7 @@ export function useSession(selectedId: string | null): SessionState & {
     (event: HostEvent) => {
       switch (event.type) {
         case 'turn_started':
+          turnStartedAt.current = Date.now()
           patch({ running: true, error: null, live: { reasoning: '', text: '', active: true } })
           break
 
@@ -462,6 +477,12 @@ export function useSession(selectedId: string | null): SessionState & {
           break
 
         case 'turn_finished':
+          /* 只有跑完一轮才有"用了多久"可算 —— 首轮之前它是 null */
+          if (turnStartedAt.current !== null) {
+            const elapsed = Date.now() - turnStartedAt.current
+            turnStartedAt.current = null
+            patch({ lastTurnElapsedMs: elapsed })
+          }
           patch({ running: false })
           void reconcile()
           break
@@ -514,10 +535,12 @@ export function useSession(selectedId: string | null): SessionState & {
           break
 
         case 'tool_intent':
+          /*
+           * 同时拉一次投影：这样"工具被调用"的那一刻界面上就有那一行，
+           * 而不是等结果回来才出现（用户要看到"它正在做什么"）。
+           */
+          void reconcile()
           patch({ note: `调用工具 ${event.tool ?? ''}` })
-          break
-
-        default:
           break
       }
     },
@@ -548,6 +571,7 @@ export function useSession(selectedId: string | null): SessionState & {
       error: null,
       note: null,
       status: '',
+      lastTurnElapsedMs: null,
       kernel: EMPTY_KERNEL,
       mode: '',
       contextTokens: 0,
@@ -579,7 +603,7 @@ export function useSession(selectedId: string | null): SessionState & {
           }
         }
 
-        if (target === null && !vanished) {
+        if (target === null && !vanished && options?.draft !== true) {
           /* 首屏本来就没选过：挑最近的一条，符合"刷新回到刚才在的地方" */
           const picked = await pickDefaultSession()
           target = picked.sessionId

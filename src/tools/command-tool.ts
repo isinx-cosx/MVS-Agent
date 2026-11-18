@@ -15,7 +15,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { closeSync, createReadStream, openSync } from 'node:fs'
+import { closeSync, createReadStream, existsSync, openSync } from 'node:fs'
 import { mkdtemp, rm, stat, statfs, truncate } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -199,10 +199,25 @@ export const runCommandTool: Tool<RunCommandArgs> = {
           ' 要在沙箱里跑，请用前台命令（run_command 不带 background）。',
       )
     }
-    if (sandboxEnabled() && ctx.sandboxOff !== true && args.background !== true) {
+    // --- 确定启动方式（沙箱与直接执行共用同一份解析结果）---
+    const direct = args.args !== undefined
+    const shell = direct ? null : shellInvocation(args.command)
+    const file = direct ? args.command : (shell?.[0] ?? args.command)
+    const argv = direct ? (args.args ?? []) : (shell?.[1] ?? [])
+
+    const outsideTool = toolOutsideSandbox(args.command, args.args)
+    if (sandboxEnabled() && ctx.sandboxOff !== true && args.background !== true && outsideTool === null) {
       const common = {
-        command: args.command,
-        args: args.args ?? (process.platform === 'win32' ? ['/c', args.command] : ['-c', args.command]),
+        /*
+         * 沙箱里要启动的是**解析后的可执行文件**，不是用户那行原文。
+         *
+         * 这里原来写的是 `command: args.command`（用户原文），于是
+         * `echo hello` 被当成"要执行的程序名"交给 CreateProcessW →
+         * ERROR_FILE_NOT_FOUND(2) → 上层报「沙箱没能启动：2」。
+         * 只有显式给了 `args` 的调用（`cmd /c …`）才碰巧走对。
+         */
+        command: file,
+        args: [...argv],
         cwd,
         timeoutMs,
         ...(process.env.MVS_SANDBOX_MAX_PROCESSES === undefined
@@ -298,11 +313,6 @@ export const runCommandTool: Tool<RunCommandArgs> = {
       })
     }
 
-    // --- 确定启动方式 ---
-    const direct = args.args !== undefined
-    const shell = direct ? null : shellInvocation(args.command)
-    const file = direct ? args.command : (shell?.[0] ?? args.command)
-    const argv = direct ? (args.args ?? []) : (shell?.[1] ?? [])
 
     /*
      * 磁盘余量哨兵：**低于底线不启动**。
@@ -530,6 +540,16 @@ export const runCommandTool: Tool<RunCommandArgs> = {
         ? composeContent(code, signalName, stdout.text, stderr.text)
         : composeContent(code, signalName, stdout.text, stderr.text, capNote)
 
+      /*
+       * 开发工具（git/npm/…）是在**沙箱外**跑的，结果里必须写明 ——
+       * 否则用户会以为这一条也受断网与写隔离保护。
+       */
+      if (outsideTool !== null) {
+        const note = `（${outsideTool} 在沙箱外执行：${outsideTool === 'git' ? 'Git 的 MSYS 运行时无法在容器内启动' : 'npm 需要盘根读属性，而那条授权会打断构建'}）`
+        return okResult(`${content}
+
+${note}`, { ...data, sandbox: 'off-tool' })
+      }
       if (code === 0) return okResult(content, data)
       return failResult('failed', `命令退出码 ${code ?? `(被信号 ${signalName} 终止)`}`, {
         content,
@@ -716,6 +736,69 @@ async function readCapped(
     truncated: true,
     bytes,
   }
+}
+
+/**
+ * 把命令行的第一个词换成**绝对路径**（如果能在 PATH 里找到）。
+ *
+ * 为什么需要：容器里 `cmd /c node --version` 报"不是内部或外部命令"，
+ * 而同样的 node 用绝对路径能跑起来 —— 差别是 **AppContainer 不能枚举**别人的
+ * 目录（比如 `C:\Program Files\nodejs`），所以 PATH 查找失败；给了绝对路径就
+ * 不需要枚举，直接执行。
+ *
+ * 只在第一个词没有路径分隔符时处理；找不到就原样返回（让 cmd 自己报错，
+ * 那样错误信息是用户熟悉的）。
+ */
+function absolutizeCommand(command: string): string {
+  const match = /^(\S+)([\s\S]*)$/.exec(command)
+  if (match === null) return command
+  const [head, rest] = [match[1]!, match[2]!]
+  if (head.includes('/') || head.includes('\\\\')) return command
+  const exts = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : ['']
+  const dirs = (process.env['PATH'] ?? '').split(process.platform === 'win32' ? ';' : ':')
+  for (const dir of dirs) {
+    if (dir === '') continue
+    for (const ext of exts) {
+      const candidate = path.join(dir, head + ext)
+      try {
+        if (existsSync(candidate)) return `"${candidate}"${rest}`
+      } catch {
+        /* 目录不可读：跳过 */
+      }
+    }
+  }
+  return command
+}
+
+/**
+ * **这些工具跑在沙箱外** —— 它们是开发工具链，不是任意命令。
+ *
+ * 为什么：
+ *
+ *   · `git` 是 Git for Windows 的 MSYS2 运行时，启动时就要打开 `/dev/null`，
+ *     在 AppContainer 里被拒（`fatal: could not open '/dev/null'`），连
+ *     `git --version` 都过不去 —— 这不是权限链能补的，它要的是设备对象。
+ *   · `npm` 要 `realpathSync('C:\')`，那需要盘根读属性；而把那条 ACE 加在
+ *     `C:\` 上会让 esbuild 读不了盘根（非规范顺序的 DACL），把构建打断。
+ *
+ * 所以：**放它们出沙箱，但仍然受 Job 上限与 kill-tree 管**。结果里会明写
+ * `sandbox: off-tool`，界面上那条工具调用也能看出来 —— 不静默放宽。
+ */
+const UNSANDBOXED_TOOLS = new Set(['git', 'npm', 'npx', 'pnpm', 'yarn'])
+
+/** 这条命令的第一个词是不是上面那些开发工具 */
+function toolOutsideSandbox(command: string, args: readonly string[] | undefined): string | null {
+  /*
+   * 没有显式 args 时，command 是**整行 Shell 文本**（`git --version`），
+   * 所以要取它的第一个词，而不是整串 —— 否则永远匹配不上。
+   */
+  const raw = args !== undefined && args.length > 0 ? args[0]! : command.trim().split(/\s+/)[0]!
+  const first = raw.replace(/^["']|["']$/g, '')
+  if (first === '') return null
+  /* 取 basename 并去掉 .exe / .cmd / .bat，允许写 "C:\Program Files\git\cmd\git.exe" */
+  const base = first.split(/[\\/]/).pop() ?? first
+  const name = base.replace(/\.(exe|cmd|bat)$/i, '').toLowerCase()
+  return UNSANDBOXED_TOOLS.has(name) ? name : null
 }
 
 function shellInvocation(command: string): readonly [string, string[]] {

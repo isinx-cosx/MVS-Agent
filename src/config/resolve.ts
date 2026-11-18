@@ -228,18 +228,25 @@ export function resolveConfig(options: ResolveOptions): ResolvedConfig {
    */
   const effective: ModelConfig = { ...file.model, ...(fromLibrary ?? {}) }
 
-  // profile 未知时退回 ollama，**并且把生效的名字也改成 ollama**。
-  // 只报警不改名的话，后面所有显示都会说「用的是 does-not-exist」——
-  // 显示的和实际用的不一致，正是我们一直在避免的那类谎报。
-  const requestedProfile = overrides.profile ?? file.profile ?? 'ollama'
-  const known = PROFILES[requestedProfile] !== undefined
-  const profileName = known ? requestedProfile : 'ollama'
-  const profile: Profile = PROFILES[profileName]!
-  if (!known) {
-    warnings.push(`未知的 profile「${requestedProfile}」，已退回「${profileName}」`)
+  /*
+   * **没有默认 profile。**
+   *
+   * 以前这里是 `?? 'ollama'`：什么都没配就悄悄连本机 Ollama。问题是"没配"与
+   * "配了 Ollama"在界面上长得一模一样 —— 用户看到 `qwen2.5` 就以为连上了，
+   * 其实一行配置都没有。
+   *
+   * 现在：没指定就是**未配置**（`profileName === ''`），端点与模型名由用户在
+   * 设置页自己填。预设仍然可用，但要显式选（`--profile ollama` 或设置页）。
+   */
+  const requestedProfile = overrides.profile ?? file.profile
+  const known = requestedProfile !== undefined && PROFILES[requestedProfile] !== undefined
+  const profileName = known ? (requestedProfile as string) : ''
+  const profile: Profile | undefined = known ? PROFILES[profileName] : undefined
+  if (requestedProfile !== undefined && !known) {
+    warnings.push(`未知的 profile「${requestedProfile}」，已忽略`)
   }
 
-  const baseUrl = overrides.baseUrl ?? env.MVS_BASE_URL ?? effective.baseUrl ?? profile.baseUrl
+  const baseUrl = overrides.baseUrl ?? env.MVS_BASE_URL ?? effective.baseUrl ?? profile?.baseUrl ?? ''
 
   // 只在**什么都没配**的时候提示。选了 profile 或用配置文件指定了端点都属于「配过了」，
   // 每次启动都警告一遍只会变成噪音，噪音会让人忽略真正的警告。
@@ -256,7 +263,7 @@ export function resolveConfig(options: ResolveOptions): ResolvedConfig {
     )
   }
 
-  const model = overrides.model ?? env.MVS_MODEL ?? effective.model ?? profile.model
+  const model = overrides.model ?? env.MVS_MODEL ?? effective.model ?? profile?.model ?? ''
 
   // ── 密钥：按来源优先级找，并**记住它是从哪来的** ──────────────────────
   //
@@ -271,7 +278,7 @@ export function resolveConfig(options: ResolveOptions): ResolvedConfig {
   const plaintext = effective.apiKey
   const hasPlaintext =
     plaintext !== undefined && plaintext !== '' && plaintext !== API_KEY_MASK
-  const envName = overrides.apiKeyEnv ?? effective.apiKeyEnv ?? profile.apiKeyEnv
+  const envName = overrides.apiKeyEnv ?? effective.apiKeyEnv ?? profile?.apiKeyEnv
   const fromNamedEnv = envName === undefined ? undefined : env[envName]
 
   if (overrides.apiKey !== undefined && overrides.apiKey !== '') {
@@ -302,7 +309,7 @@ export function resolveConfig(options: ResolveOptions): ResolvedConfig {
     )
   }
 
-  const includeUsage = effective.includeUsage ?? profile.includeUsage
+  const includeUsage = effective.includeUsage ?? profile?.includeUsage
 
   /* 单价只从用户显式声明的地方取（配置文件 / 供应商段），没有内置价格表 */
   const pricing = effective.pricing ?? file.model?.pricing
@@ -378,11 +385,11 @@ export function resolveConfig(options: ResolveOptions): ResolvedConfig {
   return {
     profileName,
     baseUrl,
-    model,
+    model: model ?? '',
     ...(apiKey === undefined ? {} : { apiKey }),
     apiKeySource,
     ...(apiKeySourceVar === undefined ? {} : { apiKeySourceVar }),
-    includeUsage,
+    includeUsage: includeUsage === true,
     ...(pricing === undefined ? {} : { pricing }),
     /* 生成参数：没设就不进这个对象，会话据此决定"发不发这个字段" */
     ...(temperature === undefined ? {} : { temperature }),

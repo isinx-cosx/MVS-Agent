@@ -44,7 +44,7 @@ const DEBUG = new URLSearchParams(location.search).has('debug')
  */
 const MODES = [
   { value: 'read-only', label: '只读', hint: '只允许读：任何写入与命令都会被拒绝' },
-  { value: 'workspace-write', label: '工作区', hint: '只允许改工作区内的文件；工作区外一律拒绝' },
+  { value: 'workspace-write', label: '可改工作区', hint: '只允许改工作区内的文件；工作区外一律拒绝' },
   { value: 'full-access', label: '完全放行', hint: '不再限制范围 —— 等于把这台机器的权限交给模型' },
 ] as const
 
@@ -514,13 +514,308 @@ function ThinkBlock({ reasoning, active }: { reasoning: string; active: boolean 
 }
 
 /** 一条已落盘的消息。`memo` 是为了流式期间不要把这些重画一遍 */
+
+/**
+ * 「执行过程」折叠块：思考 + 工具调用。
+ *
+ * 规则来自实际观感：**跑的时候要全看见**（否则不知道它在干什么），
+ * **跑完就该收起来**（否则十几次工具调用把对话切成一大片）。
+ *
+ * 收起后只留一行：`已思考并执行命令 · 12.3 秒 · 4 次工具调用`。
+ * 被打断时写"已打断"而不是"已完成" —— 这两种状态对用户的意义完全不同。
+ */
+
+/**
+ * 一轮 = 用户的提问 + 模型这一轮里所有的思考与工具调用 + 最后那段正式回复。
+ *
+ * ## 为什么按"轮"分组，而不是按消息
+ *
+ * 一轮里模型可能调用五六次工具，每次都是一个 assistant 消息。按消息渲染的话，
+ * 用户会看到五六个"执行过程"摘要块，每块都说"已思考并执行命令" —— 那不是
+ * 一轮的过程，是同一轮被切碎了。
+ *
+ * 分组之后：**整轮只有一个过程块**，摘要里的时长也是从提问到回答的总时长
+ * （`turn_started` → `turn_finished`），而不是某两次调用之间的间隔。
+ */
+/**
+ * 一轮 = 用户的提问 + 模型这一轮里的**按顺序**发生的每一步 + 最后那段正式回复。
+ *
+ * ## 为什么按"轮"分组、又为什么组内要按步骤
+ *
+ * 一轮里模型可能调用五六次工具，每次都是一个 assistant 消息。按消息渲染时，
+ * 用户会看到五六个"执行过程"摘要块 —— 那是同一轮被切碎了。
+ *
+ * 但把整轮的思考拼成一块、工具调用拼成另一块也不对：那样就**丢了顺序**。
+ * 实际发生的顺序是"想一点 → 调一个工具 → 看结果 → 再想 → 再调"，
+ * 展示必须跟着这个顺序走，否则用户没法复盘它到底是怎么绕过来的。
+ *
+ * 所以：一轮一个折叠块，块内按步骤逐条排列（每步 = 那段思考 + 那几次调用）。
+ */
+interface TurnStep {
+  key: string
+  reasoning: string
+  toolCalls: ToolCallSummary[]
+}
+
+interface Turn {
+  key: string
+  user: ChatMessage | null
+  steps: TurnStep[]
+  /** 最后一段非空正文 = 正式回复 */
+  reply: ChatMessage | null
+  /** 其它消息（工具返回等），原样兜底显示 */
+  others: ChatMessage[]
+}
+
+function groupTurns(messages: readonly ChatMessage[]): Turn[] {
+  const turns: Turn[] = []
+  let current: Turn | null = null
+  let step = 0
+
+  for (const [index, message] of messages.entries()) {
+    if (message.role === 'user') {
+      current = { key: `turn-${index}`, user: message, steps: [], reply: null, others: [] }
+      turns.push(current)
+      step = 0
+      continue
+    }
+
+    if (current === null) {
+      /* 首条不是用户消息（恢复出来的历史）：给它一个容器，别丢内容 */
+      current = { key: `turn-${index}`, user: null, steps: [], reply: null, others: [] }
+      turns.push(current)
+    }
+
+    if (message.role === 'assistant') {
+      const reasoning = message.reasoning?.trim() ?? ''
+      const toolCalls = message.toolCalls ?? []
+      /* 一步 = 一条 assistant 消息：它自己的思考 + 它发起的调用 */
+      if (reasoning !== '' || toolCalls.length > 0) {
+        current.steps.push({ key: `step-${current.key}-${step}`, reasoning, toolCalls: [...toolCalls] })
+        step += 1
+      }
+      if (textOf(message.content).trim() !== '') current.reply = message
+      continue
+    }
+
+    current.others.push(message)
+  }
+
+  return turns
+}
+
+/** 渲染一轮：用户气泡 → 过程块（一个，内部按步骤）→ 正式回复 → 其它消息 */
+/**
+ * 「复制」按钮：把这段回答的**原文**放进剪贴板。
+ *
+ * 复制的是 `textOf(content)`（Markdown 源），不是渲染后的 DOM 文本 ——
+ * 后者会把代码块的语言标记、缩进、列表符号全丢掉，粘到别处就是一团。
+ *
+ * 为什么要 fallback：`navigator.clipboard` 只在安全上下文（https / localhost）
+ * 可用；这个界面可能通过 127.0.0.1 之外的地址打开，那时就走 textarea + execCommand。
+ */
+function CopyButton({ text }: { text: string }) {
+  const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle')
+
+  const copy = async (): Promise<void> => {
+    try {
+      if (navigator.clipboard !== undefined) {
+        await navigator.clipboard.writeText(text)
+      } else {
+        const area = document.createElement('textarea')
+        area.value = text
+        area.style.position = 'fixed'
+        area.style.opacity = '0'
+        document.body.appendChild(area)
+        area.select()
+        const ok = document.execCommand('copy')
+        document.body.removeChild(area)
+        if (!ok) throw new Error('execCommand copy failed')
+      }
+      setState('ok')
+    } catch {
+      setState('fail')
+    }
+    window.setTimeout(() => setState('idle'), 1600)
+  }
+
+  return (
+    <button
+      type="button"
+      className={state === 'ok' ? 'copy-answer ok' : state === 'fail' ? 'copy-answer fail' : 'copy-answer'}
+      onClick={() => void copy()}
+      title={state === 'ok' ? '已复制' : state === 'fail' ? '复制失败' : '复制回答（Markdown 原文）'}
+      aria-label={state === 'ok' ? '已复制' : '复制回答'}
+    >
+      {state === 'ok' ? (
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <rect x="5.2" y="5.2" width="8" height="9" rx="1.8" fill="none" stroke="currentColor" strokeWidth="1.4" />
+          <path d="M10.8 5.2V3.6c0-.6-.5-1.1-1.1-1.1H3.8c-.6 0-1.1.5-1.1 1.1v6.6c0 .6.5 1.1 1.1 1.1h1.4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
+function TurnView({
+  turn,
+  results,
+  live,
+  elapsedMs,
+  interrupted,
+}: {
+  turn: Turn
+  results: Map<string, ChatMessage>
+  live: boolean
+  elapsedMs: number | null
+  interrupted: boolean
+}) {
+  const settings = useSettings()
+  const calls = turn.steps.reduce((sum, item) => sum + item.toolCalls.length, 0)
+  const thought = turn.steps.some((item) => item.reasoning !== '')
+
+  return (
+    <div className="turn">
+      {turn.user === null ? null : (
+        <div className="msg user">
+          <div className="body">{textOf(turn.user.content)}</div>
+        </div>
+      )}
+
+      {turn.steps.length > 0 ? (
+        <ProcessBlock
+          steps={turn.steps}
+          results={results}
+          live={live}
+          elapsedMs={elapsedMs}
+          interrupted={interrupted}
+          hasReasoning={thought}
+          callCount={calls}
+        />
+      ) : null}
+
+      {turn.reply === null ? null : (
+        <div className="reply">
+          <div className="msg assistant">
+            <Markdown
+              text={textOf(turn.reply.content)}
+              highlight={settings.highlight}
+              math={settings.math}
+              images={settings.images}
+            />
+          </div>
+          <CopyButton text={textOf(turn.reply.content)} />
+        </div>
+      )}
+
+      {turn.others.map((message, index) => (
+        <Message
+          key={`other-${index}`}
+          message={message}
+          results={results}
+          live={live}
+          elapsedMs={elapsedMs}
+          interrupted={interrupted}
+        />
+      ))}
+    </div>
+  )
+}
+
+/**
+ * 「执行过程」折叠块：**按发生顺序**排的每一步。
+ *
+ * 规则来自实际观感：跑的时候要全看见（否则不知道它在干什么），跑完就该收起来
+ * （否则十几次调用把对话切成一大片）。收起后只剩一行摘要。
+ */
+function ProcessBlock({
+  steps,
+  results,
+  live,
+  elapsedMs,
+  interrupted,
+  hasReasoning,
+  callCount,
+}: {
+  steps: ReadonlyArray<TurnStep>
+  results: Map<string, ChatMessage>
+  live: boolean
+  elapsedMs: number | null
+  interrupted: boolean
+  hasReasoning: boolean
+  callCount: number
+}) {
+  const [open, setOpen] = useState(false)
+  const expanded = live || open
+
+  const label = interrupted
+    ? hasReasoning && callCount > 0
+      ? '已打断 · 已思考并执行命令'
+      : hasReasoning
+        ? '已打断 · 已思考'
+        : '已打断 · 已执行命令'
+    : hasReasoning && callCount > 0
+      ? '已思考并执行命令'
+      : hasReasoning
+        ? '已思考'
+        : '已执行命令'
+
+  const seconds = elapsedMs === null ? '' : `${(elapsedMs / 1000).toFixed(1)} 秒`
+  const meta = [seconds, callCount > 0 ? `${callCount} 次工具调用` : ''].filter((item) => item !== '').join(' · ')
+
+  return (
+    <section className="process">
+      <button
+        type="button"
+        className="process-head"
+        aria-expanded={expanded}
+        disabled={live}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <svg className="chev" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+          <path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="process-label">{label}</span>
+        {meta === '' ? null : <span className="process-meta">{meta}</span>}
+      </button>
+
+      {expanded ? (
+        <div className="process-body">
+          {steps.map((step) => (
+            <div className="process-step" key={step.key}>
+              {step.reasoning === '' ? null : <ThinkBlock reasoning={step.reasoning} active={live} />}
+              {step.toolCalls.map((call, index) => (
+                <ToolCallBlock
+                  key={call.id ?? `${step.key}-${index}`}
+                  call={call}
+                  result={call.id === undefined ? undefined : results.get(call.id)}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 const Message = memo(function Message({
+  live,
+  elapsedMs,
+  interrupted,
   message,
   results,
 }: {
   message: ChatMessage
   /** 工具调用 id → 它的返回。由上层按 `toolCallId` 配好 */
   results: Map<string, ChatMessage>
+  live: boolean
+  elapsedMs: number | null
+  interrupted: boolean
 }) {
   /*
    * ⚠️ **这个 hook 必须在任何提前 return 之前调用。**
@@ -549,21 +844,24 @@ const Message = memo(function Message({
 
   return (
     <div className="msg assistant">
-      {message.reasoning !== undefined && message.reasoning.trim() !== '' ? (
-        <ThinkBlock reasoning={message.reasoning} active={false} />
-      ) : null}
-      {/*
-        工具调用：每一次都是一个可展开的块（参数 + 它的返回）。
-        返回靠 `toolCallId` 配对 —— 配不上的那种（孤儿返回）由上层单独显示，不在这里。
-      */}
-      {(message.toolCalls ?? []).map((call, index) => (
-        <ToolCallBlock
-          key={call.id ?? `${call.name ?? 'call'}-${index}`}
-          call={call}
-          result={call.id === undefined ? undefined : results.get(call.id)}
+      {/* 兜底消息（其它角色）也走同一个过程块，只是只有一步 */}
+      {message.reasoning !== undefined || (message.toolCalls ?? []).length > 0 ? (
+        <ProcessBlock
+          steps={[
+            {
+              key: 'inline',
+              reasoning: message.reasoning?.trim() ?? '',
+              toolCalls: message.toolCalls ?? [],
+            },
+          ]}
+          results={results}
+          live={live}
+          elapsedMs={elapsedMs}
+          interrupted={interrupted}
+          hasReasoning={(message.reasoning ?? '').trim() !== ''}
+          callCount={(message.toolCalls ?? []).length}
         />
-      ))}
-      {/* 正文走 Markdown；思考与工具返回保持纯文本（它们不是给人读的排版） */}
+      ) : null}
       <Markdown
         text={textOf(message.content)}
         highlight={settings.highlight}
@@ -709,66 +1007,92 @@ function SessionTagline() {
   )
 }
 
-function KernelPanel({ kernel }: { kernel: KernelState }) {
+
+/**
+ * 对话顶部栏：这一条对话是什么、开过几个子 Agent、有多少后台任务。
+ *
+ * 数据全部来自**投影里的工具调用**，不额外问后端要字段 —— 这类"统计"
+ * 如果单独维护一份状态，早晚会和对话本身对不上。
+ *
+ * 后台任务可以展开看是哪几条命令；审核统计只在**真有命中**时出现，平时不占位置。
+ */
+
+function ChatTopBar({
+  title,
+  toolCalls,
+  kernel,
+}: {
+  title: string
+  toolCalls: ReadonlyArray<{ name?: string; argsJson?: string }>
+  kernel: KernelState
+}) {
   const [open, setOpen] = useState(false)
-  const rows: Array<{ key: string; label: string; value: number }> = [
-    { key: 'secrets', label: '密钥', value: kernel.stats.secrets },
-    { key: 'pii', label: '隐私', value: kernel.stats.pii },
-    { key: 'encoded', label: '编码', value: kernel.stats.encoded },
-    { key: 'fragments', label: '片段', value: kernel.stats.fragments },
-    { key: 'chunked', label: '分段', value: kernel.stats.chunked },
-    { key: 'withheld', label: '扣留', value: kernel.stats.withheld },
-  ]
-  const total = rows.reduce((sum, row) => sum + row.value, 0)
+  const subagents = toolCalls.filter((call) => call.name === 'spawn_agent')
+  const jobs = toolCalls.filter(
+    (call) => call.name === 'run_command' && /"background"\s*:\s*true/.test(call.argsJson ?? ''),
+  )
+  const reviewed =
+    kernel.stats.secrets +
+    kernel.stats.pii +
+    kernel.stats.encoded +
+    kernel.stats.fragments +
+    kernel.stats.chunked +
+    kernel.stats.withheld
 
   return (
-    <section className="side-section kernel">
+    <header className="chat-top">
+      <span className="chat-title" title={title}>
+        {title}
+      </span>
+
+      <span className="chat-stat" title="这条对话里调用过几次 spawn_agent">
+        子 Agent {subagents.length}
+      </span>
+
       <button
         type="button"
-        className="changes-toggle"
+        className={jobs.length > 0 ? 'chat-stat as-button on' : 'chat-stat as-button'}
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
+        title={jobs.length === 0 ? '没有后台任务' : '展开看是哪几条命令'}
       >
-        <span className="chev" aria-hidden="true">
-          {open ? '▾' : '▸'}
-        </span>
-        <MvsSymbol size={13} />
-        <span>内核</span>
-        {/* 没有数据时**不要显示 0** —— "没发生"和"还没数据"是两件事 */}
-        <span className="count">{kernel.seen ? total : '—'}</span>
+        后台任务 {jobs.length}
       </button>
 
-      {open ? (
-        <div className="kernel-body">
-          {kernel.seen ? (
-            <div className="kernel-stats">
-              {rows.map((row) => (
-                <span key={row.key} className={row.value > 0 ? 'kernel-chip on' : 'kernel-chip'}>
-                  {row.label}
-                  <b>{row.value}</b>
-                </span>
-              ))}
-            </div>
-          ) : (
-            <div className="side-empty">本轮还没有审核记录</div>
-          )}
+      {/* 审核统计：没有命中就整块不出现 —— 平时它不该占位置 */}
+      {reviewed === 0 ? null : (
+        <span
+          className="chat-stat reviewed"
+          title={`本轮/本会话累计被审核拦下的内容：密钥 ${kernel.stats.secrets} · 隐私 ${kernel.stats.pii} · 编码 ${kernel.stats.encoded} · 片段 ${kernel.stats.fragments} · 分段 ${kernel.stats.chunked} · 扣留 ${kernel.stats.withheld}`}
+        >
+          已拦下 {reviewed}
+        </span>
+      )}
 
-          {kernel.decisions.length > 0 ? (
-            <ul className="kernel-list">
-              {kernel.decisions.map((item, index) => (
-                <li key={`${item.reason}-${index}`} className={item.decision === 'deny' ? 'kernel-row bad' : 'kernel-row'}>
-                  <span className="kernel-tool">{item.tool || '工具'}</span>
-                  <span className="kernel-reason" title={item.message}>
-                    {item.reason || item.decision}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
+      {open && jobs.length > 0 ? (
+        <ul className="chat-jobs">
+          {jobs.map((job, index) => (
+            <li key={index} title={job.argsJson}>
+              {commandOf(job.argsJson)}
+            </li>
+          ))}
+        </ul>
       ) : null}
-    </section>
+    </header>
   )
+}
+
+/** 从 `run_command` 的参数里取出命令本身，给顶部栏的人话用 */
+function commandOf(argsJson: string | undefined): string {
+  try {
+    const parsed = JSON.parse(argsJson ?? '{}') as { command?: unknown; args?: unknown }
+    const command = typeof parsed.command === 'string' ? parsed.command : ''
+    const argv = Array.isArray(parsed.args) ? parsed.args.filter((item): item is string => typeof item === 'string') : []
+    const text = [command, ...argv].join(' ').trim()
+    return text.length > 90 ? `${text.slice(0, 90)}…` : text || '（没有命令文本）'
+  } catch {
+    return '（参数解析失败）'
+  }
 }
 
 function Sidebar({
@@ -958,7 +1282,7 @@ function Sidebar({
         所以不让图形单独承载"这是什么"的信息。
       */}
       <div className="side-brand">
-        <MvsSymbol size={16} />
+        <MvsSymbol size={26} />
         <span>MVS Agent</span>
       </div>
 
@@ -1199,8 +1523,6 @@ function Sidebar({
         reverting={reverting}
       />
 
-      <KernelPanel kernel={kernel} />
-
       <div className="side-foot">
         {error === null ? null : <div className="side-error">{error}</div>}
         {/*
@@ -1262,7 +1584,8 @@ export function App() {
     revert,
     reverting,
     kernel,
-  } = useSession(selected)
+    lastTurnElapsedMs,
+  } = useSession(selected, { draft: draftWorkspace !== null })
 
   /* ── 生成速度：**最近 5 秒的平均** ─────────────────────────────────────
    *
@@ -1862,6 +2185,12 @@ export function App() {
   })
 
   const hasLive = live.reasoning !== '' || live.text !== '' || live.active
+  /* 空会话（草稿态）：输入框要跟着图标和标语一起居中，见 composerBlock */
+  const isEmpty = visibleMessages.length === 0 && !hasLive && ready && pending === null
+
+  /* 顶部栏用：对话名 + 投影里的全部工具调用（统计都从这里算，不另存状态） */
+  const chatTitle = sessions.find((item) => item.sessionId === sessionId)?.title ?? '新对话'
+  const allToolCalls = messages.flatMap((message) => message.toolCalls ?? [])
 
   /*
    * ★ **跟随底部：在底部就跟着，往上翻就停，滚回底部再恢复。**
@@ -1971,6 +2300,210 @@ export function App() {
     void sendMessage(text)
   }
 
+  /*
+   * 输入框整块被提成变量：
+   *
+   * · 空会话时它要**跟着图标和标语一起居中**（在空状态下面），
+   * · 有消息之后回到页面底部。
+   *
+   * 同一个元素只渲染一次，只是父容器不同 —— 复制两份 JSX 迟早会漂。
+   */
+  const composerBlock = (
+      <div id="bottom" ref={bottomRef}>
+        <form
+          id="composer"
+          onSubmit={(event) => {
+            event.preventDefault()
+            submit()
+          }}
+        >
+        {/* 只在真的久无输出时出现；正常路径什么都不显示 */}
+        {stalled ? (
+          <div className="stall">
+            已发出 {waitedSeconds} 秒，引擎还没有任何输出。
+            {localEngine
+              ? '本地引擎是单槽位 —— 可能有另一个会话正在生成、你这条在排队；也可能只是这一轮在长思考。'
+              : '接口一直没有返回内容 —— 可能是网络或服务端慢。'}
+          </div>
+        ) : null}
+
+        <div className="inner">
+          <div className="row">
+            <textarea
+              id="input"
+              ref={inputRef}
+              rows={1}
+              placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.target.value)
+                grow()
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  submit()
+                }
+              }}
+            />
+          {/*
+            一个按钮，两种身份：空闲时是"发送"（向上箭头），生成中是"停止"（方块）。
+
+            为什么不用 `type="submit"`：那样在生成中按它也会走提交路径。这里两个
+            动作都显式调用，表单的 onSubmit 仍然留给 Enter。
+
+            图标用内联 SVG 而不是字符（`↑` `■`）：字符的字形与基线随字体变，
+            居中会飘。
+          */}
+          <button
+            className="send"
+            type="button"
+            aria-label={running ? '停止生成' : '发送'}
+            title={running ? '停止生成' : '发送'}
+            disabled={!running && (draft.trim() === '' || !ready)}
+            onClick={() => {
+              if (running) void stop()
+              else submit()
+            }}
+          >
+            {running ? (
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path
+                  d="M12 19V5M6 11l6-6 6 6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            )}
+          </button>
+          </div>
+
+          {/*
+            权限模式：**放在卡片内部底部**。
+            它经常要改（"这次让它改文件"/"这次只许看"），放设置页就要点三次才能到位，
+            而它又是有后果的设置 —— 所以摆在一个看得见、够得着的地方。
+
+            改的是**这个会话**（`set_mode`），不是进程配置。
+          */}
+          <div className="mode-row">
+            {/*
+              这一行放**两个**会话级设置：权限模式与模型。都不加标签 ——
+              下拉框的内容是自明的，而"权限"/"模型"这种前缀在窄屏上白白占位。
+              说明走 tooltip。
+            */}
+            <Dropdown
+              /*
+               * 前缀「权限 · 」是必须的：只写「可改工作区」，用户会以为这是
+               * "选工作区"的下拉 —— 而工作区是左边那棵树里选的，两回事。
+               */
+              label={`权限 · ${MODES.find((item) => item.value === mode)?.label ?? '读取中…'}`}
+              title={MODES.find((item) => item.value === mode)?.hint ?? '选择这个会话的权限模式'}
+              disabled={mode === ''}
+              groups={[{ items: modeItems }]}
+            />
+
+            {/*
+              模型：改的是**这个会话**（`select_model`） —— 和设置页那个「修改」
+              （写 config.json、所有会话一起变）是两回事。按供应商分组，
+              一次选择就能跨供应商换模型。
+            */}
+            <Dropdown
+              label={currentModel === '' ? '未配置模型' : currentModel}
+              title={
+                currentModel === ''
+                  ? '这个会话要用的模型'
+                  : `当前会话用的是 ${currentModel}${activeRoute === '' ? '' : `（${activeRoute}）`}`
+              }
+              disabled={modelGroups.length === 0}
+              groups={modelGroups}
+            />
+          </div>
+        </div>
+        </form>
+
+        {/*
+          指标行：**在表单外面、输入框下方**。
+          它和输入框同属 `#bottom` 那一块，所以卡片会被它顶上去，而不是被压住。
+        */}
+        <div className="metrics">
+          <span title="这个会话已经用掉的上下文 / 模型窗口">
+            上下文 {contextTokens.toLocaleString()} /{' '}
+            {contextWindowTokens === 0 ? '—' : contextWindowTokens.toLocaleString()}
+            {contextWindowTokens > 0
+              ? `（${Math.round((contextTokens / contextWindowTokens) * 100)}%）`
+              : ''}
+          </span>
+          <span className="sep">·</span>
+          <span title="最近 5 秒的平均（滑动窗口），所以它会随快慢涨落。拿到引擎的数之后改显 token/秒（llama.cpp 的 timings）">
+            {lastUsage?.tokensPerSecond === undefined
+              ? `速度 ${charsPerSecond === null ? '—' : `~${charsPerSecond.toFixed(1)} 字/秒`}`
+              : `速度 ${lastUsage.tokensPerSecond.toFixed(1)} token/秒`}
+          </span>
+          <span className="sep">·</span>
+          <span
+            title={
+              lastUsage?.cachedTokens === undefined
+                ? '端点没有给缓存命中数（usage.prompt_tokens_details.cached_tokens）—— 那是"不知道"，不是"没命中"'
+                : `本次输入 ${lastUsage.inputTokens} 个 token，其中 ${lastUsage.cachedTokens} 个命中了引擎的提示缓存`
+            }
+          >
+            缓存命中{' '}
+            {lastUsage?.cachedTokens === undefined || lastUsage.inputTokens === 0
+              ? '—'
+              : `${Math.round((lastUsage.cachedTokens / lastUsage.inputTokens) * 100)}%`}
+          </span>
+          {/*
+            累计用量（这个会话一共）。
+
+            ⚠️ **三种状态必须分开**（这个界面反复踩的一条）：
+              · 没有数据 → `—`（不是"用了 0 token"）
+              · 有数据但端点不给缓存字段 → 缓存那格已经是 `—`
+              · 有数据 → 真实数字
+
+            **钱没显示** —— 那需要单价，而单价是用户的事：本机模型免费，
+            硬编一份过期价目表只会给出假数字。
+          */}
+          <span className="sep">·</span>
+          <span
+            title={
+              totalUsage === null
+                ? '这个会话还没拿到过引擎的用量数据 —— 那是"不知道"，不是"用了 0"'
+                : `累计 ${totalUsage.calls} 次调用：输入 ${totalUsage.inputTokens}、输出 ${totalUsage.outputTokens}`
+            }
+          >
+            累计{' '}
+            {totalUsage === null
+              ? '—'
+              : `${((totalUsage.inputTokens + totalUsage.outputTokens) / 1000).toFixed(1)}k tokens`}
+          </span>
+          {/*
+            **会话日志坏了多少条事件。**
+
+            只在非零时出现 —— 正常时它不存在，所以不占地方。
+            出现时它是"失败出来了"的证据：以前这个数被计数然后扔掉，
+            日志坏了没人知道（见 `#malformedEvents` 的注释）。
+          */}
+          {malformedEvents === 0 ? null : (
+            <>
+              <span className="sep">·</span>
+              <span
+                className="bad"
+                title="会话日志里有事件无法解析，已跳过。会话仍可用，但那几条内容丢了 —— 这一行是证据，不是噪音"
+              >
+                日志异常 {malformedEvents} 条
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+  )
   return (
     <>
       <Sidebar
@@ -1997,6 +2530,8 @@ export function App() {
          * 就是"点了没反应"。侧栏在任何页面都在，所以"点它就该去那儿"是默认预期。
          */
         onSelectSession={(sessionId) => {
+          /* 切到真实对话：草稿状态作废，否则 draft 标志会把它又按回空态 */
+          setDraftWorkspace(null)
           setSelected(sessionId)
           setView('chat')
           /* 窄屏下选完就把抽屉收起来 —— 否则它挡着刚切过去的对话 */
@@ -2109,6 +2644,7 @@ export function App() {
           />
         ) : (
           <>
+        <ChatTopBar title={chatTitle} toolCalls={allToolCalls} kernel={kernel} />
         <main
           id="log"
           ref={logRef}
@@ -2117,7 +2653,7 @@ export function App() {
            * 空状态时给它一个标记：只有这时才把 #log 变成**居中容器**。
            * 不给普通状态加 flex —— 那会改到所有消息的排版，风险不值得冒。
            */
-          data-empty={visibleMessages.length === 0 && !hasLive && ready && pending === null ? 'true' : undefined}
+          data-empty={isEmpty ? 'true' : undefined}
         >
         <div className="inner">
           {/*
@@ -2125,14 +2661,26 @@ export function App() {
             只留图形标和一句话 —— 说明文字属于"第一次用才会读的东西"，
             而这里每次新建会话都会看到，多一行就是多一行噪音。
           */}
-          {visibleMessages.length === 0 && !hasLive && ready && pending === null ? (
+          {isEmpty ? (
             <div className="empty">
-              <MvsSymbol size={88} />
-              <SessionTagline />
+              {/* 图形标和标语横排；输入框在它们**下面**，不参与这一行 */}
+              <div className="empty-row">
+                <MvsSymbol size={88} />
+                <SessionTagline />
+              </div>
+              {composerBlock}
             </div>
           ) : null}
-          {visibleMessages.map((message, index) => (
-            <Message message={message} results={toolResults} key={`${message.role}-${index}`} />
+          {groupTurns(visibleMessages).map((turn, index, turns) => (
+            <TurnView
+              key={turn.key}
+              turn={turn}
+              results={toolResults}
+              /* 只有最后一轮且正在跑，过程才全展开 */
+              live={running && index === turns.length - 1}
+              elapsedMs={lastTurnElapsedMs}
+              interrupted={status === 'interrupted'}
+            />
           ))}
 
           {pending === null ? null : (
@@ -2213,196 +2761,7 @@ export function App() {
 
         这也是为什么量高度的 ref 挂在这一层，而不是挂在表单上。
       */}
-      <div id="bottom" ref={bottomRef}>
-        <form
-          id="composer"
-          onSubmit={(event) => {
-            event.preventDefault()
-            submit()
-          }}
-        >
-        {/* 只在真的久无输出时出现；正常路径什么都不显示 */}
-        {stalled ? (
-          <div className="stall">
-            已发出 {waitedSeconds} 秒，引擎还没有任何输出。
-            {localEngine
-              ? '本地引擎是单槽位 —— 可能有另一个会话正在生成、你这条在排队；也可能只是这一轮在长思考。'
-              : '接口一直没有返回内容 —— 可能是网络或服务端慢。'}
-          </div>
-        ) : null}
-
-        <div className="inner">
-          <div className="row">
-            <textarea
-              id="input"
-              ref={inputRef}
-              rows={1}
-              placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"
-              value={draft}
-              onChange={(event) => {
-                setDraft(event.target.value)
-                grow()
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  submit()
-                }
-              }}
-            />
-          {/*
-            一个按钮，两种身份：空闲时是"发送"（向上箭头），生成中是"停止"（方块）。
-
-            为什么不用 `type="submit"`：那样在生成中按它也会走提交路径。这里两个
-            动作都显式调用，表单的 onSubmit 仍然留给 Enter。
-
-            图标用内联 SVG 而不是字符（`↑` `■`）：字符的字形与基线随字体变，
-            居中会飘。
-          */}
-          <button
-            className="send"
-            type="button"
-            aria-label={running ? '停止生成' : '发送'}
-            title={running ? '停止生成' : '发送'}
-            disabled={!running && (draft.trim() === '' || !ready)}
-            onClick={() => {
-              if (running) void stop()
-              else submit()
-            }}
-          >
-            {running ? (
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                <path
-                  d="M12 19V5M6 11l6-6 6 6"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            )}
-          </button>
-          </div>
-
-          {/*
-            权限模式：**放在卡片内部底部**。
-            它经常要改（"这次让它改文件"/"这次只许看"），放设置页就要点三次才能到位，
-            而它又是有后果的设置 —— 所以摆在一个看得见、够得着的地方。
-
-            改的是**这个会话**（`set_mode`），不是进程配置。
-          */}
-          <div className="mode-row">
-            {/*
-              这一行放**两个**会话级设置：权限模式与模型。都不加标签 ——
-              下拉框的内容是自明的，而"权限"/"模型"这种前缀在窄屏上白白占位。
-              说明走 tooltip。
-            */}
-            <Dropdown
-              label={MODES.find((item) => item.value === mode)?.label ?? '（读取中…）'}
-              title={MODES.find((item) => item.value === mode)?.hint ?? '选择这个会话的权限模式'}
-              disabled={mode === ''}
-              groups={[{ items: modeItems }]}
-            />
-
-            {/*
-              模型：改的是**这个会话**（`select_model`） —— 和设置页那个「修改」
-              （写 config.json、所有会话一起变）是两回事。按供应商分组，
-              一次选择就能跨供应商换模型。
-            */}
-            <Dropdown
-              label={currentModel === '' ? '（读取中…）' : currentModel}
-              title={
-                currentModel === ''
-                  ? '这个会话要用的模型'
-                  : `当前会话用的是 ${currentModel}${activeRoute === '' ? '' : `（${activeRoute}）`}`
-              }
-              disabled={modelGroups.length === 0}
-              groups={modelGroups}
-            />
-          </div>
-        </div>
-        </form>
-
-        {/*
-          指标行：**在表单外面、输入框下方**。
-          它和输入框同属 `#bottom` 那一块，所以卡片会被它顶上去，而不是被压住。
-        */}
-        <div className="metrics">
-          <span title="这个会话已经用掉的上下文 / 模型窗口">
-            上下文 {contextTokens.toLocaleString()} /{' '}
-            {contextWindowTokens === 0 ? '—' : contextWindowTokens.toLocaleString()}
-            {contextWindowTokens > 0
-              ? `（${Math.round((contextTokens / contextWindowTokens) * 100)}%）`
-              : ''}
-          </span>
-          <span className="sep">·</span>
-          <span title="最近 5 秒的平均（滑动窗口），所以它会随快慢涨落。拿到引擎的数之后改显 token/秒（llama.cpp 的 timings）">
-            {lastUsage?.tokensPerSecond === undefined
-              ? `速度 ${charsPerSecond === null ? '—' : `~${charsPerSecond.toFixed(1)} 字/秒`}`
-              : `速度 ${lastUsage.tokensPerSecond.toFixed(1)} token/秒`}
-          </span>
-          <span className="sep">·</span>
-          <span
-            title={
-              lastUsage?.cachedTokens === undefined
-                ? '端点没有给缓存命中数（usage.prompt_tokens_details.cached_tokens）—— 那是"不知道"，不是"没命中"'
-                : `本次输入 ${lastUsage.inputTokens} 个 token，其中 ${lastUsage.cachedTokens} 个命中了引擎的提示缓存`
-            }
-          >
-            缓存命中{' '}
-            {lastUsage?.cachedTokens === undefined || lastUsage.inputTokens === 0
-              ? '—'
-              : `${Math.round((lastUsage.cachedTokens / lastUsage.inputTokens) * 100)}%`}
-          </span>
-          {/*
-            累计用量（这个会话一共）。
-
-            ⚠️ **三种状态必须分开**（这个界面反复踩的一条）：
-              · 没有数据 → `—`（不是"用了 0 token"）
-              · 有数据但端点不给缓存字段 → 缓存那格已经是 `—`
-              · 有数据 → 真实数字
-
-            **钱没显示** —— 那需要单价，而单价是用户的事：本机模型免费，
-            硬编一份过期价目表只会给出假数字。
-          */}
-          <span className="sep">·</span>
-          <span
-            title={
-              totalUsage === null
-                ? '这个会话还没拿到过引擎的用量数据 —— 那是"不知道"，不是"用了 0"'
-                : `累计 ${totalUsage.calls} 次调用：输入 ${totalUsage.inputTokens}、输出 ${totalUsage.outputTokens}`
-            }
-          >
-            累计{' '}
-            {totalUsage === null
-              ? '—'
-              : `${((totalUsage.inputTokens + totalUsage.outputTokens) / 1000).toFixed(1)}k tokens`}
-          </span>
-          {/*
-            **会话日志坏了多少条事件。**
-
-            只在非零时出现 —— 正常时它不存在，所以不占地方。
-            出现时它是"失败出来了"的证据：以前这个数被计数然后扔掉，
-            日志坏了没人知道（见 `#malformedEvents` 的注释）。
-          */}
-          {malformedEvents === 0 ? null : (
-            <>
-              <span className="sep">·</span>
-              <span
-                className="bad"
-                title="会话日志里有事件无法解析，已跳过。会话仍可用，但那几条内容丢了 —— 这一行是证据，不是噪音"
-              >
-                日志异常 {malformedEvents} 条
-              </span>
-            </>
-          )}
-        </div>
-      </div>
+{isEmpty ? null : composerBlock}
           </>
         )}
       </div>

@@ -302,13 +302,14 @@ test('★ 窗口：没声明就是 undefined，交给探测 —— 绝不在这�
   assert.equal(declared.contextWindow, 128_000)
 })
 
-test('未知 profile 会警告并退回 ollama', () => {
+test('未知 profile 只警告、不退回任何预设（没有默认供应商）', () => {
   const resolved = resolveConfig({
     config: { version: 1, profile: 'does-not-exist' },
     overrides: {},
     env: {},
   })
-  assert.equal(resolved.profileName, 'ollama')
+  assert.equal(resolved.profileName, '', '未指定 profile 时不该退回预设')
+  assert.equal(resolved.model, '', '模型名也不该被预设填上')
   assert.ok(resolved.warnings.some((w) => w.includes('does-not-exist')))
 })
 
